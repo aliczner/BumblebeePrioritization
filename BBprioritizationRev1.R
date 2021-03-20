@@ -7,20 +7,58 @@
 library(raster) #for accessing raster data
 library(tidyverse) #for combining outputs, data manipulation and cleaning
 library(usdm) #vif function for checking collinearity
-library(ENMeval)
+library(ENMeval) #function for MaxEnt to check feature class settings and regularization settings
+library(dismo) #used to add background points to the SDM
 
-#working directory for SDMS
-setwd("C:\\Users\\Amanda\\Documents\\PhD\\Chapter 3\\Manuscript\\Revision 1\\Analyses\\Current") #when working on current climate
-setwd("C:\\Users\\Amanda\\Documents\\PhD\\Chapter 3\\Manuscript\\Revision 1\\Analyses\\\Future2.6SDMs") #when working on future climate rcp 2.6
-setwd("C:\\Users\\Amanda\\Documents\\PhD\\Chapter 3\\Manuscript\\Revision 1\\Analyses\\Future8.5SDMs") #when working on future climate rcp 8.5
+## specify temporary directory for rasters
+rasterOptions(tmpdir= "D://Documents//Temp")
 
 #Data for SDMS
-bombus<-read.csv("C:\\Users\\Amanda\\Documents\\PhD\\Chapter 3\\Manuscript\\Revision 1\\Analyses\\Data\\NABumblebeeRecordsClean.csv")#bumble bee occurrences. Code for prep below
+bombus<-read.csv("NABumblebeeRecordsClean.csv")#bumble bee occurrences. Code for prep below
 coordinates(bombus)<-~longitude+latitude # assigns the occurrences to spatial points data frame
 proj4string(bombus)<-"+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0" #sets the CRS for occurrence points
-polyNA<-readOGR(dsn= "C:\\Users\\Amanda\\Documents\\PhD\\Chapter 3\\North America Datafiles\\NApolygon.shp", layer="NApolygon") #North America shapefile from rgdal
-biasfile<-raster("C:\\Users\\Amanda\\Documents\\PhD\\Chapter 3\\North America Datafiles\\CurrentSDMs\\bias.raster.tif") #biasfile made from all bumble bees and all years. Code for prep below
-current<-stack("C:\\Users\\Amanda\\Documents\\PhD\\Chapter 3\\North America Datafiles\\CurrentSDMs\\currentclimateNA2.5min.grd") # current climate raster from worldlclim at 2.5 km resolution. Code for prep below
+bias<-raster("bias.raster.tif")
+current<-stack("current/currentclimateNA2.5min.grd")
+poly<-shapefile("NApolygon.shp")
+
+### Current Climate Analyses
+
+## testing new package using one species for now - affinis
+## checking for and removing collinear variables for affinis
+
+affinis<-subset(bombus, species=="affinis")
+
+random <- sampleRandom(current, 7070, xy=T) #adding random background points for comparison. 10 x sample size 
+random <- rbind(data.frame(longitude=random[,1],latitude=random[,2]), coordinates(affinis)) ## add occurrences to background points
+ext.ppt <- raster::extract(current, random) ## extract bioclim variables for those points
+vifOut <- vifcor(ext.ppt) 
+climateaff<- subset(current, as.character(vifOut@results$Variables)) #climate dataset without collinear var
+
+# trying ENMeaval package
+
+affinis<-as.data.frame(affinis)#needs occurrence points as a data frame 
+affinis2<-affinis[,c(4,3)] #can only have two columns, longitude and latitude in that order
+
+set.seed(0)
+# affBkg <- xyFromCell(bias, sample(ncell(bias), 7070, prob=values(bias))) #background points
+affBkg <- sampleRandom(current, 7070, xy=T)[,1:2]
+regs<-c(0.5,1,2,3,4,5)
+feats<-c("L", "LQ", "H", "HQ", "T", "HQP", "HQPT")
+
+aff<-ENMevaluate(affinis2, climateaff, bg.coords=affBkg, RMvalues= regs, fc=feats, 
+                 method= "randomkfold", kfold=5, algorithm="maxent.jar")
+predictOut <- predict( climateaff, aff@models[[1]], type="logistic",progress="text") ## predictOut raster
+#function will need to normalize rasters after accounting for biasfile
+normalize <- function(x){(x-min(x, na.rm=T))/(max(x, na.rm=T)-min(x, na.rm=T))}
+predictOutCorrected <- predictOut*bias
+predictOutCorrected<- calc(predictOutCorrected, normalize)
+crs(predictOutCorrected) <- crs(climateaff)
+
+## find threshold
+evalMaxent <- evaluate(affinis2, affBkg, aff@models[[1]], climateaff) ## threshold @ max TPR+TNR
+threshold(evalMaxent)
+
+writeRaster(predictOutCorrected, "affinisOut.grd", overwrite=T)
 
 ## NOT RUN - prepped during initial manuscript submission and does not need to be revised. 
 
@@ -57,19 +95,24 @@ current<-stack("C:\\Users\\Amanda\\Documents\\PhD\\Chapter 3\\North America Data
 #writeRaster(bioclim.all, "currentclimateNA2.5min.grd")
 
 #creating a bias file
-allbumble<-read.csv("C:\\Users\\Amanda\\Documents\\PhD\\Chapter 3\\North America Datafiles\\all.shareable.bbna.03.10.2020.csv") #all bumble bee occurrences for Canada for all years
-allbumble<-allbumble %>%
-  filter(latitude != "") %>%
-  filter(longitude != "") %>%
-  filter(longitude > extent(polyNA)[1] & longitude < extent(polyNA)[2]) %>% filter(latitude > extent(polyNA)[3]  & latitude < extent(polyNA)[4]) ## crop out to polyNA
-coordinates(allbumble)<-~longitude+latitude #assigning coordinates columns 
-proj4string(allbumble)<-"+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0" #defining crs
-biasocc<- allbumble
-pres.locs <- data.frame(coordinates(biasocc))
-xband <- MASS::bandwidth.nrd(pres.locs[,1]) ## Find bandwidths for x of raster
-yband <- MASS::bandwidth.nrd(pres.locs[,2]) ## Find bandwidths for y of raster
-dens <- KernSmooth::bkde2D(cbind(pres.locs[,1], pres.locs[,2]), bandwidth=c(xband,yband), gridsize=c(nrow(current),ncol(current))) ## density function based on raster cells to create bias raster
-dens.ras <- raster(list(x=dens$x1,y=dens$x2,z=dens$fhat))
-crs(dens.ras) <- crs(current)
-dens.ras <- resample(dens.ras, current, method="bilinear") #make bias raster in the same resolution of landcover file
-writeRaster(dens.ras, "bias.raster.tif")
+#allbumble<-read.csv("C:\\Users\\Amanda\\Documents\\PhD\\Chapter 3\\North America Datafiles\\all.shareable.bbna.03.10.2020.csv") #all bumble bee occurrences for Canada for all years
+#allbumble<-allbumble %>%
+ # filter(latitude != "") %>%
+  #filter(longitude != "") %>%
+  #filter(longitude > extent(polyNA)[1] & longitude < extent(polyNA)[2]) %>% filter(latitude > extent(polyNA)[3]  & latitude < extent(polyNA)[4]) ## crop out to polyNA
+#coordinates(allbumble)<-~longitude+latitude #assigning coordinates columns 
+#proj4string(allbumble)<-"+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0" #defining crs
+#biasocc<- allbumble
+#pres.locs <- data.frame(coordinates(biasocc))
+#xband <- MASS::bandwidth.nrd(pres.locs[,1]) ## Find bandwidths for x of raster
+#yband <- MASS::bandwidth.nrd(pres.locs[,2]) ## Find bandwidths for y of raster
+#dens <- KernSmooth::bkde2D(cbind(pres.locs[,1], pres.locs[,2]), bandwidth=c(xband,yband), gridsize=c(nrow(current),ncol(current))) ## density function based on raster cells to create bias raster
+#dens.ras <- raster(list(x=dens$x1,y=dens$x2,z=dens$fhat))
+#crs(dens.ras) <- crs(current)
+#dens.ras <- resample(dens.ras, current, method="bilinear") #make bias raster in the same resolution of landcover file
+#writeRaster(dens.ras, "bias.raster.tif")
+
+###
+
+## prepping future climate data
+
