@@ -11,7 +11,7 @@ library(ENMeval) #function for MaxEnt to check feature class settings and regula
 library(dismo) #used to add background points to the SDM
 
 ## specify temporary directory for rasters
-rasterOptions(tmpdir= "D://Documents//Temp")
+#rasterOptions(tmpdir= "D://Documents//Temp")
 
 #Data for SDMS
 bombus<-read.csv("NABumblebeeRecordsClean.csv")#bumble bee occurrences. Code for prep below
@@ -40,25 +40,45 @@ affinis<-as.data.frame(affinis)#needs occurrence points as a data frame
 affinis2<-affinis[,c(4,3)] #can only have two columns, longitude and latitude in that order
 
 set.seed(0)
-# affBkg <- xyFromCell(bias, sample(ncell(bias), 7070, prob=values(bias))) #background points
-affBkg <- sampleRandom(current, 7070, xy=T)[,1:2]
+affBkg <- xyFromCell(bias, sample(ncell(bias), 10000, prob=values(bias))) #background points
 regs<-c(0.5,1,2,3,4,5)
-feats<-c("L", "LQ", "H", "HQ", "T", "HQP", "HQPT")
+feats<-c("L", "Q", "P", "LQ", "H", "HQ", "T", "HQP", "HQPT", "HPLQ")
 
 aff<-ENMevaluate(affinis2, climateaff, bg.coords=affBkg, RMvalues= regs, fc=feats, 
                  method= "randomkfold", kfold=5, algorithm="maxent.jar")
-predictOut <- predict( climateaff, aff@models[[1]], type="logistic",progress="text") ## predictOut raster
+predictOut <- predict( climateaff, aff@models[[39]], type="logistic",progress="text") ## predictOut raster
 #function will need to normalize rasters after accounting for biasfile
-normalize <- function(x){(x-min(x, na.rm=T))/(max(x, na.rm=T)-min(x, na.rm=T))}
-predictOutCorrected <- predictOut*bias
-predictOutCorrected<- calc(predictOutCorrected, normalize)
-crs(predictOutCorrected) <- crs(climateaff)
+#may need to assign CRS at some point
 
-## find threshold
+## find threshold, reviewer mentioned this but I don't think I'm going to do it
 evalMaxent <- evaluate(affinis2, affBkg, aff@models[[1]], climateaff) ## threshold @ max TPR+TNR
 threshold(evalMaxent)
 
 writeRaster(predictOutCorrected, "affinisOut.grd", overwrite=T)
+
+##Prepping future climate data from worldclim
+
+#RCP 2.6
+bioclim <- list.files("RCP2.6", full.names = TRUE, pattern=".tif")
+bioclim.all <- stack(bioclim)
+bioclim.all <- crop(bioclim.all, poly) 
+bioclim.all <- mask(bioclim.all, poly) 
+
+## add letter to the end of the bioclim vars to separate out the 1s from the 10s
+rasterNames <- paste0(names(bioclim.all),"e")
+
+## Iterate through all 19 bioclim variables
+future26 <- stack()
+future26 <- lapply(1:19, function(i){
+biovar <- paste0("bi50",i,"e") ## select bioclimate variable per iteration
+bioclimTemp <- bioclim.all[[grep(biovar,rasterNames)]] ## select that climvar
+meanTemp <- mean(bioclimTemp) ## average across GCMs
+future26 <- stack(future26, meanTemp)
+})
+## convert list of rasters to raster stack
+all26 <- do.call(stack, future26)
+names(all26) <- paste0(rep("bio",19),1:19)
+writeRaster(all26, "Future2.6.grd")
 
 ## NOT RUN - prepped during initial manuscript submission and does not need to be revised. 
 
