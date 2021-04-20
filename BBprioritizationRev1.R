@@ -18,8 +18,8 @@ bombus<-read.csv("NABumblebeeRecordsClean.csv")#bumble bee occurrences. Code for
 coordinates(bombus)<-~longitude+latitude # assigns the occurrences to spatial points data frame
 proj4string(bombus)<-"+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0" #sets the CRS for occurrence points
 bias<-raster("bias.raster.tif")
-current<-stack("current/currentclimateNA2.5min.grd")
 poly<-shapefile("NApolygon.shp")
+current<-stack("Current.tif")
 
 ### Current Climate Analyses
 
@@ -41,8 +41,8 @@ affinis2<-affinis[,c(4,3)] #can only have two columns, longitude and latitude in
 
 set.seed(0)
 affBkg <- xyFromCell(bias, sample(ncell(bias), 10000, prob=values(bias))) #background points
-regs<-c(0.5,1,2,3,4,5)
-feats<-c("L", "Q", "P", "LQ", "H", "HQ", "T", "HQP", "HQPT", "HPLQ")
+regs<-c(0.5,1,2,3,4,5) #regularization multipliers
+feats<-c("L", "Q", "P", "LQ", "H", "HQ", "T", "HQP", "HQPT", "HPLQ") #feature classes
 
 aff<-ENMevaluate(affinis2, climateaff, bg.coords=affBkg, RMvalues= regs, fc=feats, 
                  method= "randomkfold", kfold=5, algorithm="maxent.jar")
@@ -55,6 +55,16 @@ evalMaxent <- evaluate(affinis2, affBkg, aff@models[[1]], climateaff) ## thresho
 threshold(evalMaxent)
 
 writeRaster(predictOutCorrected, "affinisOut.grd", overwrite=T)
+
+####################
+###Climate Data Prepping
+
+##Current climate
+currentclim<-list.files("current", full.names = TRUE, pattern=".bil")
+currentclim.all<-stack(currentclim)
+currentclim.all <- crop(currentclim.all, poly) 
+currentclim.all <- mask(currentclim.all, poly)
+writeRaster(currentclim.all, "Current.tif")
 
 ##Prepping future climate data from worldclim
 
@@ -71,7 +81,7 @@ rasterNames <- paste0(names(bioclim.all),"e")
 future26 <- stack()
 future26 <- lapply(1:19, function(i){
 biovar <- paste0("bi50",i,"e") ## select bioclimate variable per iteration
-bioclimTemp <- bioclim.all[[grep(biovar,rasterNames)]] ## select that climvar
+bioclimTemp <- bioclim.all[[grep(biovar,rasterNames)]] ## select that climate variable
 meanTemp <- mean(bioclimTemp) ## average across GCMs
 future26 <- stack(future26, meanTemp)
 })
