@@ -20,6 +20,8 @@ proj4string(bombus)<-"+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=
 bias<-raster("bias.raster.tif")
 poly<-shapefile("NApolygon.shp")
 current<-stack("Current.tif")
+future26<-stack("Future2.6.grd")
+future85<-stack("Future8.5.grd")
 
 ### Current Climate Analyses
 
@@ -66,9 +68,9 @@ currentclim.all <- crop(currentclim.all, poly)
 currentclim.all <- mask(currentclim.all, poly)
 writeRaster(currentclim.all, "Current.tif")
 
-##Prepping future climate data from worldclim
+###Prepping future climate data from worldclim
 
-#RCP 2.6
+##RCP 2.6
 bioclim <- list.files("RCP2.6", full.names = TRUE, pattern=".tif")
 bioclim.all <- stack(bioclim)
 bioclim.all <- crop(bioclim.all, poly) 
@@ -89,6 +91,29 @@ future26 <- stack(future26, meanTemp)
 all26 <- do.call(stack, future26)
 names(all26) <- paste0(rep("bio",19),1:19)
 writeRaster(all26, "Future2.6.grd")
+
+##RCP 8.5
+bioclim <- list.files("RCP8.5", full.names = TRUE, pattern=".tif")
+bioclim.all <- stack(bioclim)
+bioclim.all <- crop(bioclim.all, poly) 
+bioclim.all <- mask(bioclim.all, poly) 
+
+## add letter to the end of the bioclim vars to separate out the 1s from the 10s
+rasterNames <- paste0(names(bioclim.all),"e")
+
+## Iterate through all 19 bioclim variables
+future85 <- stack()
+future85 <- lapply(1:19, function(i){
+  biovar <- paste0("bi50",i,"e") ## select bioclimate variable per iteration
+  bioclimTemp <- bioclim.all[[grep(biovar,rasterNames)]] ## select that climate variable
+  meanTemp <- mean(bioclimTemp) ## average across GCMs
+  future85 <- stack(future85, meanTemp)
+})
+## convert list of rasters to raster stack
+all85 <- do.call(stack, future85)
+names(all85) <- paste0(rep("bio",19),1:19)
+writeRaster(all85, "Future8.5.grd")
+
 
 ## NOT RUN - prepped during initial manuscript submission and does not need to be revised. 
 
