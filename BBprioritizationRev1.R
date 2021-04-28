@@ -57,27 +57,36 @@ BBsdm<-function(climate, spp, spDF, biasfile)  {
   SppMax<-ENMevaluate(tempSpp2, climateSp, bg.coords=SppBkg, RMvalues= regs, fc=feats, 
                    method= "randomkfold", kfold=5, algorithm="maxent.jar")
   predictOut <- predict(climateSp, SppMax@models[[which (SppMax@results$delta.AICc==0)]], type="logistic") ## predictOut raster
+  predict26 <- predict(future26, SppMax@models[[which (SppMax@results$delta.AICc==0)]], type="logistic") ## predictOut raster
+  predict85 <- predict(future85, SppMax@models[[which (SppMax@results$delta.AICc==0)]], type="logistic") ## predictOut raster
   
-  ## save raster
-  writeRaster(predictOut, paste0("currentOutputs//Current",spp,".tif", overwrite=T))
+  ## save the rasters
+  writeRaster(predictOut, paste0("CurrentOutputs//Current",spp,".tif", overwrite=T))
+  writeRaster(predict26, paste0("Future2.6//Future26_",spp,".tif", overwrite=T))
+  writeRaster(predict85, paste0("Future8.5//Future85_",spp,".tif", overwrite=T))
   
   #may need to assign CRS at some point
   
   #species area for current climate
   #range of species estimate
-  spprange<- predictOut
-  spprange[spprange>0] <- NA
-  spprange<-spprange[!is.na(spprange)]
-  spprange<- ncell(spprange)/ncell(current)
-  spprange<-(spprange)*1717662
-  
+  calcsppRange <- function(x){
+    spprange<- x
+    spprange[spprange>0] <- NA
+    spprange<-spprange[!is.na(spprange)]
+    spprange<- ncell(spprange)/ncell(current)
+    spprange<-(spprange)*1717662
+    return(spprange)
+  }
+    
   #>50%
-  spp50 <- predictOut
-  spp50[spp50<0.5] <-  NA 
-  spp50<- spp50[!is.na(spp50)]
-  spp50 <- ncell(spp50)/ncell(current)
-  area50km <- (spp50)* 1717662 #area of Canada multiplied by the percent pixels occupied by the species
-
+  calcspp50 <- function(x){
+    spp50<- x
+    spp50[spp50<0.5] <-  NA 
+    spp50<-spp50[!is.na(spp50)]
+    spp50<- ncell(spp50)/ncell(current)
+    spp50<-(spprange)*1717662  #area of Canada multiplied by the percent pixels occupied by the species
+    return(spp50)
+  }
   
   ## Best MaxEnt Model
   bestMax <- SppMax@results[[which (SppMax@results$delta.AICc==0)]]
@@ -91,10 +100,13 @@ BBsdm<-function(climate, spp, spDF, biasfile)  {
                         npresence=nrow(tempSpp), nabsence=background,  ## number of presence or absences
                         VIFexclude=paste0(varsExcluded, collapse="", sep=";"), ## colinear variables removed
                         importantVars=paste0(varImp$importance, collapse=";"), importantValue=paste0(varImp$permutation.importance, collapse=";"), percentContribution=paste0(varImp$percent.contribution, collapse=";"), 
-                        spprange, area50km) ## Range characteristics
+                        currentRange= calcsppRange(predictOut), currentArea50km = calcspp50(predictOut), ## Range characteristics
+                        future26Range= calcsppRange(predict26), future26Area50km = calcspp50(predict26), ## Range characteristics
+                        future85Range= calcsppRange(predict85), future85Area50km = calcspp50(predict85)) ## Range characteristics
+                        
   print("Predict distribution complete - raster written - datefile saved")
   
-  write.csv(outData, paste0("currentOutputs//",spp,"currentoutput.csv"), row.names=FALSE)
+  write.csv(outData, paste0("CurrentOutputs//",spp,"currentoutput.csv"), row.names=FALSE)
 }
 
 for(i in 1:44){
