@@ -23,7 +23,84 @@ current<-stack("Current.tif")
 future26<-stack("Future2.6.grd")
 future85<-stack("Future8.5.grd")
 
+########################
 ### Current Climate Analyses
+#######################
+
+speciesList <- sort(as.character(unique(bombus$species)))
+
+BBsdm<-function(climate, spp, spDF, biasfile)  {
+  
+  ## Data set up
+  tempSpp <- subset(spDF, species == spp)
+  background <- nrow(tempSpp)*10
+  
+  ## Checking for collinearity among the climate variables using vifcor
+  random <- sampleRandom(climate, background, xy=T) #adding random background points for comparison. 10 x sample size 
+  random <- rbind(data.frame(longitude=random[,1],latitude=random[,2]), coordinates(tempSpp)) ## add occurrences to background points
+  ext.ppt <- extract(climate, random) ## extract bioclim variables for those points
+  vifOut <- vifcor(ext.ppt) 
+  climateSp<- subset(climate, as.character(vifOut@results$Variables)) #climate dataset without collinear variables
+  varsExcluded <- vifOut@excluded
+  print(paste0("Collinearity checked, variables removed", varsExcluded))
+
+  ## Maxent using ENMeaval package
+  
+  tempSpp<-as.data.frame(tempSpp)
+  tempSpp2<-tempSpp[,c(4,3)]
+  
+  set.seed(1)
+  SppBkg <- xyFromCell(bias, sample(ncell(bias), 10000, prob=values(bias))) #background points
+  regs<-c(0.5,1,2,3,4,5) #regularization multipliers
+  feats<-c("L", "Q", "P", "LQ", "H", "HQ", "T", "HQP", "HQPT", "HPLQ") #feature classes
+  
+  SppMax<-ENMevaluate(tempSpp2, climateSp, bg.coords=SppBkg, RMvalues= regs, fc=feats, 
+                   method= "randomkfold", kfold=5, algorithm="maxent.jar")
+  predictOut <- predict(climateSp, SppMax@models[[which (SppMax@results$delta.AICc==0)]], type="logistic") ## predictOut raster
+  
+  ## save raster
+  writeRaster(predictOut, paste0("currentOutputs//Current",spp,".tif", overwrite=T))
+  
+  #may need to assign CRS at some point
+  
+  #species area for current climate
+  #range of species estimate
+  spprange<- predictOut
+  spprange[spprange>0] <- NA
+  spprange<-spprange[!is.na(spprange)]
+  spprange<- ncell(spprange)/ncell(current)
+  spprange<-(spprange)*1717662
+  
+  #>50%
+  spp50 <- predictOut
+  spp50[spp50<0.5] <-  NA 
+  spp50<- spp50[!is.na(spp50)]
+  spp50 <- ncell(spp50)/ncell(current)
+  area50km <- (spp50)* 1717662 #area of Canada multiplied by the percent pixels occupied by the species
+
+  
+  ## Best MaxEnt Model
+  bestMax <- SppMax@results[[which (SppMax@results$delta.AICc==0)]]
+  bestModel <- SppMax@models[[which (SppMax@results$delta.AICc==0)]]
+  varImp <- var.importance(bestModel)
+  
+  ## Output data
+  outData <- data.frame(species= spp, ## label the species
+                        auc=bestMax[,"train.auc"], ## model statistic
+                        features=bestMax[,"features"], regularization=bestMax[,"rm"], ## maxent parameters
+                        npresence=nrow(tempSpp), nabsence=background,  ## number of presence or absences
+                        VIFexclude=paste0(varsExcluded, collapse="", sep=";"), ## colinear variables removed
+                        importantVars=paste0(varImp$importance, collapse=";"), importantValue=paste0(varImp$permutation.importance, collapse=";"), percentContribution=paste0(varImp$percent.contribution, collapse=";"), 
+                        spprange, area50km) ## Range characteristics
+  print("Predict distribution complete - raster written - datefile saved")
+  
+  write.csv(outData, paste0("currentOutputs//",spp,"currentoutput.csv"), row.names=FALSE)
+}
+
+for(i in 1:44){
+  BBsdm(climate=current, spp=speciesList[i], spDF = bombus,  biasfile=bias)
+  print(i)
+}
 
 ## testing new package using one species for now - affinis
 ## checking for and removing collinear variables for affinis
@@ -60,6 +137,7 @@ writeRaster(predictOutCorrected, "affinisOut.grd", overwrite=T)
 
 ####################
 ###Climate Data Prepping
+####################
 
 ##Current climate
 currentclim<-list.files("current", full.names = TRUE, pattern=".bil")
