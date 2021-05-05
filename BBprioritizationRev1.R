@@ -23,13 +23,22 @@ current<-stack("Current.tif")
 future26<-stack("Future2.6.grd")
 future85<-stack("Future8.5.grd")
 
+## Rename raster stacks to be the same names
+names(current) <- paste0(rep("bio",19),1:19)
+names(future26) <- paste0(rep("bio",19),1:19)
+names(future85) <- paste0(rep("bio",19),1:19)
+
 ########################
-### Current Climate Analyses
+### SDM Climate Analyses for current and future
 #######################
 
 speciesList <- sort(as.character(unique(bombus$species)))
 
-BBsdm<-function(climate, spp, spDF, biasfile)  {
+currents<-stack("Outputs/CurrentStack.tif")
+
+BBsdm<-function(spp, spDF, biasfile)  {
+  ## Load current climate
+  climate=current
   
   ## Data set up
   tempSpp <- subset(spDF, species == spp)
@@ -38,7 +47,7 @@ BBsdm<-function(climate, spp, spDF, biasfile)  {
   ## Checking for collinearity among the climate variables using vifcor
   random <- sampleRandom(climate, background, xy=T) #adding random background points for comparison. 10 x sample size 
   random <- rbind(data.frame(longitude=random[,1],latitude=random[,2]), coordinates(tempSpp)) ## add occurrences to background points
-  ext.ppt <- extract(climate, random) ## extract bioclim variables for those points
+  ext.ppt <- raster::extract(climate, random) ## extract bioclim variables for those points
   vifOut <- vifcor(ext.ppt) 
   climateSp<- subset(climate, as.character(vifOut@results$Variables)) #climate dataset without collinear variables
   varsExcluded <- vifOut@excluded
@@ -53,7 +62,7 @@ BBsdm<-function(climate, spp, spDF, biasfile)  {
   SppBkg <- xyFromCell(bias, sample(ncell(bias), 10000, prob=values(bias))) #background points
   regs<-c(0.5,1,2,3,4,5) #regularization multipliers
   feats<-c("L", "Q", "P", "LQ", "H", "HQ", "T", "HQP", "HQPT", "HPLQ") #feature classes
-  
+
   SppMax<-ENMevaluate(tempSpp2, climateSp, bg.coords=SppBkg, RMvalues= regs, fc=feats, 
                    method= "randomkfold", kfold=5, algorithm="maxent.jar")
   predictOut <- predict(climateSp, SppMax@models[[which (SppMax@results$delta.AICc==0)]], type="logistic") ## predictOut raster
@@ -61,9 +70,9 @@ BBsdm<-function(climate, spp, spDF, biasfile)  {
   predict85 <- predict(future85, SppMax@models[[which (SppMax@results$delta.AICc==0)]], type="logistic") ## predictOut raster
   
   ## save the rasters
-  writeRaster(predictOut, paste0("CurrentOutputs//Current",spp,".tif", overwrite=T))
-  writeRaster(predict26, paste0("Future2.6//Future26_",spp,".tif", overwrite=T))
-  writeRaster(predict85, paste0("Future8.5//Future85_",spp,".tif", overwrite=T))
+  writeRaster(predictOut, paste0("Outputs//Current_",spp,".tif", overwrite=T))
+  writeRaster(predict26, paste0("Outputs//Future26_",spp,".tif", overwrite=T))
+  writeRaster(predict85, paste0("Outputs//Future85_",spp,".tif", overwrite=T))
   
   #may need to assign CRS at some point
   
@@ -84,18 +93,18 @@ BBsdm<-function(climate, spp, spDF, biasfile)  {
     spp50[spp50<0.5] <-  NA 
     spp50<-spp50[!is.na(spp50)]
     spp50<- ncell(spp50)/ncell(current)
-    spp50<-(spprange)*1717662  #area of Canada multiplied by the percent pixels occupied by the species
+    spp50<-(spp50)*1717662  #area of Canada multiplied by the percent pixels occupied by the species
     return(spp50)
   }
   
   ## Best MaxEnt Model
-  bestMax <- SppMax@results[[which (SppMax@results$delta.AICc==0)]]
+  bestMax <- SppMax@results[which (SppMax@results$delta.AICc==0),]
   bestModel <- SppMax@models[[which (SppMax@results$delta.AICc==0)]]
   varImp <- var.importance(bestModel)
   
   ## Output data
   outData <- data.frame(species= spp, ## label the species
-                        auc=bestMax[,"train.auc"], ## model statistic
+                        auc=bestMax[,"train.AUC"], ## model statistic
                         features=bestMax[,"features"], regularization=bestMax[,"rm"], ## maxent parameters
                         npresence=nrow(tempSpp), nabsence=background,  ## number of presence or absences
                         VIFexclude=paste0(varsExcluded, collapse="", sep=";"), ## colinear variables removed
@@ -106,46 +115,114 @@ BBsdm<-function(climate, spp, spDF, biasfile)  {
                         
   print("Predict distribution complete - raster written - datefile saved")
   
-  write.csv(outData, paste0("CurrentOutputs//",spp,"currentoutput.csv"), row.names=FALSE)
+  write.csv(outData, paste0("Outputs//",spp,"SDMoutput.csv"), row.names=FALSE)
 }
 
 for(i in 1:44){
-  BBsdm(climate=current, spp=speciesList[i], spDF = bombus,  biasfile=bias)
+  BBsdm( spp=speciesList[i], spDF = bombus,  biasfile=bias)
   print(i)
 }
+#######################################################################
+#Prioritizr analyses
+#######################################################################
 
-## testing new package using one species for now - affinis
-## checking for and removing collinear variables for affinis
+###libraries
+library(raster)
+library(prioritzr)
+library(rgdal)
+library(gurobi)
 
-affinis<-subset(bombus, species=="affinis")
+###datasets
+canada <- raster("CanadaPolyRaster5km.grd") # cost file
+canada[canada > 0] <- 1 # set cost of each pixel to be 1
 
-random <- sampleRandom(current, 7070, xy=T) #adding random background points for comparison. 10 x sample size 
-random <- rbind(data.frame(longitude=random[,1],latitude=random[,2]), coordinates(affinis)) ## add occurrences to background points
-ext.ppt <- raster::extract(current, random) ## extract bioclim variables for those points
-vifOut <- vifcor(ext.ppt) 
-climateaff<- subset(current, as.character(vifOut@results$Variables)) #climate dataset without collinear var
+terrprotectedareas <- raster("CanadaTerrestrialProtectedAreas.tif")
+newprotect <- terrprotectedareas
+newprotect[is.na(newprotect)] <- 0
+newprotect[newprotect != 0 ] <- 1 # assigning areas that are not protected areas to 0 and areas that are to 1
 
-# trying ENMeaval package
+landcover <- stack("C:\\Users\\Amanda\\Documents\\PhD\\Chapter 3\\North America Datafiles\\landstackproj2.bil") # MOSIS landcover raster
+crs(landcover) <- "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"
 
-affinis<-as.data.frame(affinis)#needs occurrence points as a data frame 
-affinis2<-affinis[,c(4,3)] #can only have two columns, longitude and latitude in that order
+###############
+###prioritizr 
+###############
 
-set.seed(0)
-affBkg <- xyFromCell(bias, sample(ncell(bias), 10000, prob=values(bias))) #background points
-regs<-c(0.5,1,2,3,4,5) #regularization multipliers
-feats<-c("L", "Q", "P", "LQ", "H", "HQ", "T", "HQP", "HQPT", "HPLQ") #feature classes
+## add min set objective function
 
-aff<-ENMevaluate(affinis2, climateaff, bg.coords=affBkg, RMvalues= regs, fc=feats, 
-                 method= "randomkfold", kfold=5, algorithm="maxent.jar")
-predictOut <- predict( climateaff, aff@models[[39]], type="logistic",progress="text") ## predictOut raster
-#function will need to normalize rasters after accounting for biasfile
-#may need to assign CRS at some point
+bb_priormin <- function(pu = canada, features = currentstackmin, rel_tar = 0.17, 
+                        raster_name = "", np = newprotect,
+                        lc = landcover) {
+  
+  p0 <- problem(pu, features) %>%
+    add_min_set_objective() %>%
+    add_relative_targets(rel_tar) %>%
+    add_binary_decisions() %>%
+    add_gurobi_solver(threads = 6)
+  s0 <- solve(p0)
+  if(raster_name != ""){
+    writeRaster(s0, raster_name)
+  }
+  
+  f0 <- feature_representation(p0, s0) # checking species representation
+  
+  # determining the amount of solution is within terrestrial protected areas
+  zn_p <- zonal(s0, np, fun = "sum") # summing the amount of pixes within and outside of protected areas
+  #     zone   sum
+  # [1,]    0 86537
+  # [2,]    1 16456   ###16,456 pixels from s2b are within protected areas
+  fr_s <- freq(s0) ## 102993 pixels are in the prioritizr solution for s2b (values = 1)
+  ## 15.98% of the solution is in protected areas
+  
+  # determining which landcover classes are within the solution
+  s0landcover <- data.frame()
+  for (i in 1:nlayers(lc)) {
+    tempstats <- zonal(s0, lc[[i]], fun = "sum") ## create temporary dataset of zonal statistics
+    temppercent <- tempstats[2, ] / freq(s0)[2, ]
+    tempdata <- data.frame(lc = i, percent = temppercent[2] * 100)
+    s0landcover <- rbind(s0landcover, tempdata)
+    rownames(s0landcover) <- 1:nrow(s0landcover)
+  }
+  ## convert data classes to dataframes
+  speciesData <- data.frame(f0)
+  zn_p <- data.frame(zn_p)
+  fr_s <- data.frame(fr_s)
+  ## calculate percent protected area, write csv for output files, produce list
+  speciesData[,"percentProtected"] <- zn_p[zn_p$zone==1, "sum"]/fr_s[2, "count"]*100
+  write.csv(speciesData, paste0(gsub(".tif","", raster_name),"species.csv"), row.names=F)
+  write.csv(s0landcover, paste0(gsub(".tif","", raster_name),"landcover.csv"), row.names=F)
+  return(list(p0 = p0, s0 = s0, f0 = f0, zn_p = zn_p, fr_s = fr_s, s0landcover = s0landcover))
+}
 
-## find threshold, reviewer mentioned this but I don't think I'm going to do it
-evalMaxent <- evaluate(affinis2, affBkg, aff@models[[1]], climateaff) ## threshold @ max TPR+TNR
-threshold(evalMaxent)
 
-writeRaster(predictOutCorrected, "affinisOut.grd", overwrite=T)
+### Problem 1a add_min_set objective, 17% (Aichi target), current climate
+p1a <- bb_priormin(raster_name =  "s1aMinSet17.tif")
+
+### Problem 2a add_min_set objective, 30% (Canada 2050 biodiversity target), current climate
+p2a <- bb_priormin( rel_tar = 0.3, raster_name =  "s2aMinSet30.tif")
+
+### Problem 3a add_min_set objective, 50% (nature needs half), current climate
+p3a<- bb_priormin( rel_tar = 0.5, raster_name =  "s3aMinSet50.tif")
+
+### Problem 1b add_min_set_objective, 17% target, future climate rcp 2.6
+p1b <- bb_priormin(features = future26stackmin, raster_name =  "s1bMinSet17RCP26.tif")
+
+### Problem 2b add_min_set_objective, 30% target, future climate rcp 2.6
+p2b<- bb_priormin(features = future26stackmin, rel_tar = 0.3, raster_name =  "s2bMinSet30RCP26.tif")
+
+### Problem 3b add_min_set objective, 50% (nature needs half), future climate rcp 2.6
+p3b <- bb_priormin(features= future26stackmin, rel_tar = 0.5, raster_name =  "s3bMinSet50RCP26.tif")
+
+### Problem 1c add_min_set_objective, 17% target, future climate rcp 8.5
+p1c <- bb_priormin(features = future85stackmin, raster_name =  "s1cMinSet17RCP85.tif")
+
+### Problem 2c add_min_set_objective, 30% target, future climate rcp 8.5
+p2c<- bb_priormin(features = future85stackmin, rel_tar = 0.3, raster_name =  "s2cMinSet30RCP85.tif")
+
+### Problem 3c add_min_set objective, 50% (nature needs half), future climate rcp 8.5
+p3c <- bb_priormin(features= future85stackmin, rel_tar = 0.5, raster_name =  "s3cMinSet50RCP85.tif")
+
+
 
 ####################
 ###Climate Data Prepping
@@ -203,6 +280,62 @@ future85 <- lapply(1:19, function(i){
 all85 <- do.call(stack, future85)
 names(all85) <- paste0(rep("bio",19),1:19)
 writeRaster(all85, "Future8.5.grd")
+
+###############
+#Prioritizr data prepping
+###############
+
+#Current Climate
+currents<-stack("Outputs/CurrentStack.tif")
+polyCAN <- getData("GADM", country = "CAN", level = 1) 
+newnames<-c("Bombus.affinis","Bombus.appositus","Bombus.auricomus","Bombus.bifarius","Bombus.bimaculatus","Bombus.bohemicus",
+      "Bombus.borealis","Bombus.caliginosus","Bombus.centralis","Bombus.citrinus","Bombus.crotchii","Bombus.cryptarum","Bombus.fervidus",
+      "Bombus.flavidus","Bombus.flavifrons","Bombus fraternus", "Bombus.frigidus","Bombus.griseocollis","Bombus.huntii","Bombus.impatiens",
+      "Bombus.insularis","Bombus.jonellus","Bombus.kirbiellus","Bombus.kluanensis","Bombus.melanopygus","Bombus.mixtus","Bombus.morrisoni",
+      "Bombus.natvigi","Bombus.neoboreus","Bombus.nevadensis","Bombus.occidentalis","Bombus.pensylvanicus","Bombus.perplexus",
+      "Bombus.polaris","Bombus.rufocinctus","Bombus.sandersoni","Bombus.sitkensis","Bombus.suckleyi", "Bombus.sylvicola",
+      "Bombus.ternarius","Bombus.terricola","Bombus.vagans","Bombus.vandykei","Bombus.vosnesenskii")
+names(currents)<-newnames
+cropstack<-crop(currents, polyCAN)
+maskstack<-mask(cropstack, polyCAN) 
+stackspmin<-maskstack
+stackspmin <- reclassify(stackspmin, cbind(-Inf, 0.2, 0), right=FALSE)
+writeRaster(stackspmin, "CurrentStack2.5min.grd", overwrite=T)
+
+#Future climate RCP 2.6
+futures26<-stack("Outputs/futures26tack.tif")
+polyCAN <- getData("GADM", country = "CAN", level = 1) 
+newnames<-c("Bombus.affinis","Bombus.appositus","Bombus.auricomus","Bombus.bifarius","Bombus.bimaculatus","Bombus.bohemicus",
+            "Bombus.borealis","Bombus.caliginosus","Bombus.centralis","Bombus.citrinus","Bombus.crotchii","Bombus.cryptarum","Bombus.fervidus",
+            "Bombus.flavidus","Bombus.flavifrons","Bombus fraternus", "Bombus.frigidus","Bombus.griseocollis","Bombus.huntii","Bombus.impatiens",
+            "Bombus.insularis","Bombus.jonellus","Bombus.kirbiellus","Bombus.kluanensis","Bombus.melanopygus","Bombus.mixtus","Bombus.morrisoni",
+            "Bombus.natvigi","Bombus.neoboreus","Bombus.nevadensis","Bombus.occidentalis","Bombus.pensylvanicus","Bombus.perplexus",
+            "Bombus.polaris","Bombus.rufocinctus","Bombus.sandersoni","Bombus.sitkensis","Bombus.suckleyi", "Bombus.sylvicola",
+            "Bombus.ternarius","Bombus.terricola","Bombus.vagans","Bombus.vandykei","Bombus.vosnesenskii")
+names(futures26)<-newnames
+cropstack<-crop(futures26, polyCAN)
+maskstack<-mask(cropstack, polyCAN) 
+stackspmin<-maskstack
+stackspmin <- reclassify(stackspmin, cbind(-Inf, 0.2, 0), right=FALSE)
+writeRaster(stackspmin, "future26stack2.5min.grd", overwrite=T)
+
+#Future climate RCP 8.5
+futures85<-stack("Outputs/futures85tack.tif")
+polyCAN <- getData("GADM", country = "CAN", level = 1) 
+newnames<-c("Bombus.affinis","Bombus.appositus","Bombus.auricomus","Bombus.bifarius","Bombus.bimaculatus","Bombus.bohemicus",
+            "Bombus.borealis","Bombus.caliginosus","Bombus.centralis","Bombus.citrinus","Bombus.crotchii","Bombus.cryptarum","Bombus.fervidus",
+            "Bombus.flavidus","Bombus.flavifrons","Bombus fraternus", "Bombus.frigidus","Bombus.griseocollis","Bombus.huntii","Bombus.impatiens",
+            "Bombus.insularis","Bombus.jonellus","Bombus.kirbiellus","Bombus.kluanensis","Bombus.melanopygus","Bombus.mixtus","Bombus.morrisoni",
+            "Bombus.natvigi","Bombus.neoboreus","Bombus.nevadensis","Bombus.occidentalis","Bombus.pensylvanicus","Bombus.perplexus",
+            "Bombus.polaris","Bombus.rufocinctus","Bombus.sandersoni","Bombus.sitkensis","Bombus.suckleyi", "Bombus.sylvicola",
+            "Bombus.ternarius","Bombus.terricola","Bombus.vagans","Bombus.vandykei","Bombus.vosnesenskii")
+names(futures85)<-newnames
+cropstack<-crop(futures85, polyCAN)
+maskstack<-mask(cropstack, polyCAN) 
+stackspmin<-maskstack
+stackspmin <- reclassify(stackspmin, cbind(-Inf, 0.2, 0), right=FALSE)
+writeRaster(stackspmin, "future85stack2.5min.grd", overwrite=T)
+
 
 
 ## NOT RUN - prepped during initial manuscript submission and does not need to be revised. 
