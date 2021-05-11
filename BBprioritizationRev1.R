@@ -19,7 +19,7 @@ coordinates(bombus)<-~longitude+latitude # assigns the occurrences to spatial po
 proj4string(bombus)<-"+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0" #sets the CRS for occurrence points
 bias<-raster("bias.raster.tif")
 poly<-shapefile("NApolygon.shp")
-current<-stack("Current.tif")
+current<-stack("Currentclim.tif")
 future26<-stack("Future2.6.grd")
 future85<-stack("Future8.5.grd")
 
@@ -126,32 +126,33 @@ for(i in 1:44){
 #Prioritizr analyses
 #######################################################################
 
-###libraries
+#libraries
+library(prioritizr)
 library(raster)
-library(prioritzr)
 library(rgdal)
 library(gurobi)
 
-###datasets
+#datafiles
+currentstackmin<-stack("CurrentStack2.5min.grd")
+currentstackmin[[16]][currentstackmin[[16]]>0] <-0 #very small value predicted in current for fraternus which does not occur in Canada so removing
+future26stackmin<-stack("Future26Stack2.5min.grd")
+crs(future26stackmin)<-"+proj=longlat +datum=WGS84 +no_defs" 
+future85stackmin<-stack("Future85Stack2.5min.grd")
+crs(future85stackmin)<-"+proj=longlat +datum=WGS84 +no_defs" 
 canada <- raster("CanadaPolyRaster5km.grd") # cost file
-canada[canada > 0] <- 1 # set cost of each pixel to be 1
-
+canada[canada > 0] <- 1 # set cost of each pixed to be 1
 terrprotectedareas <- raster("CanadaTerrestrialProtectedAreas.tif")
 newprotect <- terrprotectedareas
 newprotect[is.na(newprotect)] <- 0
 newprotect[newprotect != 0 ] <- 1 # assigning areas that are not protected areas to 0 and areas that are to 1
+newprotect2 <- resample(newprotect, currentstackmin, method="ngb")
 
-landcover <- stack("C:\\Users\\Amanda\\Documents\\PhD\\Chapter 3\\North America Datafiles\\landstackproj2.bil") # MOSIS landcover raster
-crs(landcover) <- "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"
-
-###############
-###prioritizr 
-###############
+landcover <- stack("newlandstack.tif") # MODIS landcover raster
 
 ## add min set objective function
 
 bb_priormin <- function(pu = canada, features = currentstackmin, rel_tar = 0.17, 
-                        raster_name = "", np = newprotect,
+                        raster_name = "", np = newprotect2,
                         lc = landcover) {
   
   p0 <- problem(pu, features) %>%
@@ -164,7 +165,7 @@ bb_priormin <- function(pu = canada, features = currentstackmin, rel_tar = 0.17,
     writeRaster(s0, raster_name)
   }
   
-  f0 <- feature_representation(p0, s0) # checking species representation
+  f0 <- eval_feature_representation_summary(p0, s0) # checking species representation
   
   # determining the amount of solution is within terrestrial protected areas
   zn_p <- zonal(s0, np, fun = "sum") # summing the amount of pixes within and outside of protected areas
@@ -195,34 +196,32 @@ bb_priormin <- function(pu = canada, features = currentstackmin, rel_tar = 0.17,
 }
 
 
-### Problem 1a add_min_set objective, 17% (Aichi target), current climate
-p1a <- bb_priormin(raster_name =  "s1aMinSet17.tif")
+### Problem 1a add_min_set objective, 17%, current climate
+p1a <- bb_priormin(raster_name =  "prioritizrResults//s1aMinSet17.tif")
 
 ### Problem 2a add_min_set objective, 30% (Canada 2050 biodiversity target), current climate
-p2a <- bb_priormin( rel_tar = 0.3, raster_name =  "s2aMinSet30.tif")
+p2a <- bb_priormin( rel_tar = 0.3, raster_name =  "prioritizrResults//s2aMinSet30.tif")
 
 ### Problem 3a add_min_set objective, 50% (nature needs half), current climate
-p3a<- bb_priormin( rel_tar = 0.5, raster_name =  "s3aMinSet50.tif")
+p3a<- bb_priormin( rel_tar = 0.5, raster_name =  "prioritizrResults//s3aMinSet50.tif")
 
 ### Problem 1b add_min_set_objective, 17% target, future climate rcp 2.6
-p1b <- bb_priormin(features = future26stackmin, raster_name =  "s1bMinSet17RCP26.tif")
+p1b <- bb_priormin(features = future26stackmin, raster_name =  "prioritizrResults//s1bMinSet17RCP26.tif")
 
 ### Problem 2b add_min_set_objective, 30% target, future climate rcp 2.6
-p2b<- bb_priormin(features = future26stackmin, rel_tar = 0.3, raster_name =  "s2bMinSet30RCP26.tif")
+p2b<- bb_priormin(features = future26stackmin, rel_tar = 0.3, raster_name =  "prioritizrResults//s2bMinSet30RCP26.tif")
 
 ### Problem 3b add_min_set objective, 50% (nature needs half), future climate rcp 2.6
-p3b <- bb_priormin(features= future26stackmin, rel_tar = 0.5, raster_name =  "s3bMinSet50RCP26.tif")
+p3b <- bb_priormin(features= future26stackmin, rel_tar = 0.5, raster_name =  "prioritizrResults//s3bMinSet50RCP26.tif")
 
 ### Problem 1c add_min_set_objective, 17% target, future climate rcp 8.5
-p1c <- bb_priormin(features = future85stackmin, raster_name =  "s1cMinSet17RCP85.tif")
+p1c <- bb_priormin(features = future85stackmin, raster_name =  "prioritizrResults//s1cMinSet17RCP85.tif")
 
 ### Problem 2c add_min_set_objective, 30% target, future climate rcp 8.5
-p2c<- bb_priormin(features = future85stackmin, rel_tar = 0.3, raster_name =  "s2cMinSet30RCP85.tif")
+p2c<- bb_priormin(features = future85stackmin, rel_tar = 0.3, raster_name =  "prioritizrResults//s2cMinSet30RCP85.tif")
 
 ### Problem 3c add_min_set objective, 50% (nature needs half), future climate rcp 8.5
-p3c <- bb_priormin(features= future85stackmin, rel_tar = 0.5, raster_name =  "s3cMinSet50RCP85.tif")
-
-
+p3c <- bb_priormin(features= future85stackmin, rel_tar = 0.5, raster_name =  "prioritizrResults//s3cMinSet50RCP85.tif")
 
 ####################
 ###Climate Data Prepping
@@ -285,17 +284,10 @@ writeRaster(all85, "Future8.5.grd")
 #Prioritizr data prepping
 ###############
 
+polyCAN <- getData("GADM", country = "CAN", level = 1)
+
 #Current Climate
-currents<-stack("Outputs/CurrentStack.tif")
-polyCAN <- getData("GADM", country = "CAN", level = 1) 
-newnames<-c("Bombus.affinis","Bombus.appositus","Bombus.auricomus","Bombus.bifarius","Bombus.bimaculatus","Bombus.bohemicus",
-      "Bombus.borealis","Bombus.caliginosus","Bombus.centralis","Bombus.citrinus","Bombus.crotchii","Bombus.cryptarum","Bombus.fervidus",
-      "Bombus.flavidus","Bombus.flavifrons","Bombus fraternus", "Bombus.frigidus","Bombus.griseocollis","Bombus.huntii","Bombus.impatiens",
-      "Bombus.insularis","Bombus.jonellus","Bombus.kirbiellus","Bombus.kluanensis","Bombus.melanopygus","Bombus.mixtus","Bombus.morrisoni",
-      "Bombus.natvigi","Bombus.neoboreus","Bombus.nevadensis","Bombus.occidentalis","Bombus.pensylvanicus","Bombus.perplexus",
-      "Bombus.polaris","Bombus.rufocinctus","Bombus.sandersoni","Bombus.sitkensis","Bombus.suckleyi", "Bombus.sylvicola",
-      "Bombus.ternarius","Bombus.terricola","Bombus.vagans","Bombus.vandykei","Bombus.vosnesenskii")
-names(currents)<-newnames
+currents<-stack("Outputs/CurrentStackAll.tif")
 cropstack<-crop(currents, polyCAN)
 maskstack<-mask(cropstack, polyCAN) 
 stackspmin<-maskstack
@@ -303,38 +295,20 @@ stackspmin <- reclassify(stackspmin, cbind(-Inf, 0.2, 0), right=FALSE)
 writeRaster(stackspmin, "CurrentStack2.5min.grd", overwrite=T)
 
 #Future climate RCP 2.6
-futures26<-stack("Outputs/futures26tack.tif")
-polyCAN <- getData("GADM", country = "CAN", level = 1) 
-newnames<-c("Bombus.affinis","Bombus.appositus","Bombus.auricomus","Bombus.bifarius","Bombus.bimaculatus","Bombus.bohemicus",
-            "Bombus.borealis","Bombus.caliginosus","Bombus.centralis","Bombus.citrinus","Bombus.crotchii","Bombus.cryptarum","Bombus.fervidus",
-            "Bombus.flavidus","Bombus.flavifrons","Bombus fraternus", "Bombus.frigidus","Bombus.griseocollis","Bombus.huntii","Bombus.impatiens",
-            "Bombus.insularis","Bombus.jonellus","Bombus.kirbiellus","Bombus.kluanensis","Bombus.melanopygus","Bombus.mixtus","Bombus.morrisoni",
-            "Bombus.natvigi","Bombus.neoboreus","Bombus.nevadensis","Bombus.occidentalis","Bombus.pensylvanicus","Bombus.perplexus",
-            "Bombus.polaris","Bombus.rufocinctus","Bombus.sandersoni","Bombus.sitkensis","Bombus.suckleyi", "Bombus.sylvicola",
-            "Bombus.ternarius","Bombus.terricola","Bombus.vagans","Bombus.vandykei","Bombus.vosnesenskii")
-names(futures26)<-newnames
+futures26<-stack("Outputs/Future26StackAll.tif")
 cropstack<-crop(futures26, polyCAN)
 maskstack<-mask(cropstack, polyCAN) 
 stackspmin<-maskstack
 stackspmin <- reclassify(stackspmin, cbind(-Inf, 0.2, 0), right=FALSE)
-writeRaster(stackspmin, "future26stack2.5min.grd", overwrite=T)
+writeRaster(stackspmin, "Future26stack2.5min.grd", overwrite=T)
 
 #Future climate RCP 8.5
-futures85<-stack("Outputs/futures85tack.tif")
-polyCAN <- getData("GADM", country = "CAN", level = 1) 
-newnames<-c("Bombus.affinis","Bombus.appositus","Bombus.auricomus","Bombus.bifarius","Bombus.bimaculatus","Bombus.bohemicus",
-            "Bombus.borealis","Bombus.caliginosus","Bombus.centralis","Bombus.citrinus","Bombus.crotchii","Bombus.cryptarum","Bombus.fervidus",
-            "Bombus.flavidus","Bombus.flavifrons","Bombus fraternus", "Bombus.frigidus","Bombus.griseocollis","Bombus.huntii","Bombus.impatiens",
-            "Bombus.insularis","Bombus.jonellus","Bombus.kirbiellus","Bombus.kluanensis","Bombus.melanopygus","Bombus.mixtus","Bombus.morrisoni",
-            "Bombus.natvigi","Bombus.neoboreus","Bombus.nevadensis","Bombus.occidentalis","Bombus.pensylvanicus","Bombus.perplexus",
-            "Bombus.polaris","Bombus.rufocinctus","Bombus.sandersoni","Bombus.sitkensis","Bombus.suckleyi", "Bombus.sylvicola",
-            "Bombus.ternarius","Bombus.terricola","Bombus.vagans","Bombus.vandykei","Bombus.vosnesenskii")
-names(futures85)<-newnames
+futures85<-stack("Outputs/Future85StackAll.tif")
 cropstack<-crop(futures85, polyCAN)
 maskstack<-mask(cropstack, polyCAN) 
 stackspmin<-maskstack
 stackspmin <- reclassify(stackspmin, cbind(-Inf, 0.2, 0), right=FALSE)
-writeRaster(stackspmin, "future85stack2.5min.grd", overwrite=T)
+writeRaster(stackspmin, "Future85stack2.5min.grd", overwrite=T)
 
 
 
