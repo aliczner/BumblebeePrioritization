@@ -196,6 +196,8 @@ bb_priormin <- function(pu = canada, features = currentstackmin, rel_tar = 0.17,
 }
 
 
+####Min set all species equal
+
 ### Problem 1a add_min_set objective, 17%, current climate
 p1a <- bb_priormin(raster_name =  "prioritizrResults//s1aMinSet17.tif")
 
@@ -222,6 +224,45 @@ p2c<- bb_priormin(features = future85stackmin, rel_tar = 0.3, raster_name =  "pr
 
 ### Problem 3c add_min_set objective, 50% (nature needs half), future climate rcp 8.5
 p3c <- bb_priormin(features= future85stackmin, rel_tar = 0.5, raster_name =  "prioritizrResults//s3cMinSet50RCP85.tif")
+
+################
+#Prioritizr results figures
+###############
+
+## prioritizr results figure 1 add min set objective
+s1a<-raster("prioritizrResults/s1aMinSet17.tif")
+s2a<-raster("prioritizrResults/s2aMinSet30.tif")
+s3a<-raster("prioritizrResults/s3aMinSet50.tif")
+s1b<-raster("prioritizrResults/s1bMinSet17RCP26.tif")
+s2b<-raster("prioritizrResults/s2bMinSet30RCP26.tif")
+s3b<-raster("prioritizrResults/s3bMinset50RCP26.tif")
+s1c<-raster("prioritizrResults/s1cMinSet17RCP85.tif")
+s2c<-raster("prioritizrResults/s2cMinSet30RCP85.tif")
+s3c<-raster("prioritizrResults/s3cMinSet50RCP85.tif")
+
+topleft<-(s1b*1.1)-s1a
+topmid<-(s2b*1.1)-s2a
+topright<-(s3b*1.1)-s3a
+midleft<-(s1c*1.1)-s1a
+midmid<-(s2c*1.1)-s2a
+midright<-(s3c*1.1)-s3a
+botleft<-s1a*s1b*s1c
+botmid<-s2a*s2b*s2c
+botright<-s3a*s3b*s3c
+
+pdf("FigureMinSet.pdf", width = 16, height = 16, useDingbats = F)
+par(mfrow = c(3, 3))
+par(mar = c(4.5, 4.5, 0, 0))
+plot(topleft, col = c("#D4B483","#E3E3E3", "#416788","#416788"), legend = FALSE, xaxt = "n", cex.axis = 2, las = 1, xlim=c(-145,-52))
+plot(topmid, col = c("#D4B483","#E3E3E3", "#416788","#416788"), legend = FALSE, xaxt = "n", yaxt = "n", xlim=c(-145,-52))
+plot(topright, col = c("#D4B483","#E3E3E3", "#416788","#416788"), legend = FALSE, xaxt = "n", yaxt = "n", xlim=c(-145,-52))
+plot(midleft, col = c("#D4B483","#E3E3E3", "#416788","#416788"), legend = FALSE, xaxt = "n", cex.axis = 2, las = 1, xlim=c(-145,-52))
+plot(midmid, col = c("#D4B483","#E3E3E3", "#416788","#416788"), legend = FALSE, xaxt = "n", yaxt = "n", xlim=c(-145,-52))
+plot(midright, col = c("#D4B483","#E3E3E3", "#416788","#416788"), legend = FALSE, xaxt = "n", yaxt = "n", xlim=c(-145,-52))
+plot(botleft, col = c("#E3E3E3", "#51A3A3"), legend = FALSE, cex.axis = 2, las = 1, xlim=c(-145,-52))
+plot(botmid, col = c("#E3E3E3", "#51A3A3"), legend = FALSE, yaxt = "n", cex.axis = 2, xlim=c(-145,-52))
+plot(botright, col = c("#E3E3E3", "#51A3A3"), legend = FALSE, yaxt = "n", cex.axis = 2, xlim=c(-145,-52))
+dev.off()
 
 ####################
 ###Climate Data Prepping
