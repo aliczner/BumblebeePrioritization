@@ -264,9 +264,41 @@ plot(botmid, col = c("#E3E3E3", "#51A3A3"), legend = FALSE, yaxt = "n", cex.axis
 plot(botright, col = c("#E3E3E3", "#51A3A3"), legend = FALSE, yaxt = "n", cex.axis = 2, xlim=c(-145,-52))
 dev.off()
 
-####################
+####landcover bar plot figure
+library(ggplot2)
+library(tidyverse)
+library(purrr)
+
+#first need to combine output files
+landcovercsv <- list.files(path = "prioritizrResults/landcover", pattern = ".csv", full.names = TRUE)
+landlist<-landcovercsv %>% 
+  setNames(nm= .) %>%
+  map_dfr(~read_csv(.x, col_types=cols(), col_names=FALSE), .id="file_name")
+write.csv(landlist, "prioritizrResults/landcover/AllLandcover.csv")
+
+#reorganized AllLandcover csv and reclassified landcover classes to names
+#making the figure
+#calculating percent cover of each landcover class
+landdat<-read.csv("prioritizrResults/landcover/AllLandcover.csv")
+keeps <-landdat %>% group_by(landcover) %>% summarize(n=min(percent)) %>% filter(n>1)
+landdat2 <- landdat %>% filter(landcover %in% keeps$landcover)
+
+#calculating standard error for barplot
+error <-landdat2 %>% group_by(landcover, Climate) %>% summarise(mean = mean(percent), se=sd(percent)/sqrt(3)) 
+
+#making plot
+ggplot(data=error, aes(x=reorder(landcover, -mean), y=mean, fill=Climate))+
+  geom_bar(stat="summary",  color="black", position=position_dodge())  +
+  geom_errorbar(data=error, aes(x=reorder(landcover, -mean), ymin=mean-se, ymax=mean+se), width=0, position=position_dodge(width=0.9)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        panel.background = element_blank(), axis.line = element_line(colour = "black")) +
+  scale_fill_manual(values=c("#FAFF81", "#FC7753", "#403D58"))+
+  xlab("Landcover Class")+ ylab("Percent Cover")+scale_y_continuous(expand=c(0,0))
+
+
+#####################
 ###Climate Data Prepping
-####################
+#####################
 
 ##Current climate
 currentclim<-list.files("current", full.names = TRUE, pattern=".bil")
