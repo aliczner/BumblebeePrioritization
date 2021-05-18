@@ -225,9 +225,9 @@ p2c<- bb_priormin(features = future85stackmin, rel_tar = 0.3, raster_name =  "pr
 ### Problem 3c add_min_set objective, 50% (nature needs half), future climate rcp 8.5
 p3c <- bb_priormin(features= future85stackmin, rel_tar = 0.5, raster_name =  "prioritizrResults//s3cMinSet50RCP85.tif")
 
-################
+##################
 #Prioritizr results figures
-###############
+##################
 
 ## prioritizr results figure 1 add min set objective
 s1a<-raster("prioritizrResults/s1aMinSet17.tif")
@@ -294,6 +294,31 @@ ggplot(data=error, aes(x=reorder(landcover, -mean), y=mean, fill=Climate))+
         panel.background = element_blank(), axis.line = element_line(colour = "black")) +
   scale_fill_manual(values=c("#FAFF81", "#FC7753", "#403D58"))+
   xlab("Landcover Class")+ ylab("Percent Cover")+scale_y_continuous(expand=c(0,0))
+
+###Proportion of common and at-risk species within protected asreas
+
+##combinbing csv files for species representation outputs
+library(tidyverse)
+MinSetcsv <- list.files(path ="prioritizrResults/speciesOutput", pattern = ".csv", full.names = TRUE)
+MinSetlist<-MinSetcsv %>% 
+  setNames(nm= .) %>%
+  map_dfr(~read_csv(.x, col_types=cols(), col_names=FALSE), .id="file_name")
+write.csv(MinSetlist, "prioritizrResults/speciesOutput/AllMinSet.csv")
+
+##proportion of at-risk vs. common species within the solution
+#summarized excel sheet in excel, added common/at-risk status
+object<-read.csv("prioritizrResults/speciesOutput/AllMinSet.csv")
+error <-object %>% group_by(Status, Climate, Target) %>% summarise(mean = mean(relative.held), se=sd(relative.held)/sqrt(3))
+
+ggplot(data=error, aes(x=Climate, y=mean, fill=Status))+
+  geom_bar(stat="summary", color="black", position=position_dodge()) + facet_grid(cols=vars(Target)) +
+  geom_errorbar(data=error, aes (x=Climate, ymin=mean-se, ymax=mean+se), width=0, position=position_dodge(width=0.9)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        panel.background = element_blank(), axis.line = element_line(colour = "black")) +
+  scale_fill_manual(values=c("#EAC435", "#345995"))+
+  xlab("")+ ylab("Proportion of distribution")+scale_y_continuous(expand=c(0,0), breaks=seq(0, .70, .10))
+
+
 
 
 #####################
