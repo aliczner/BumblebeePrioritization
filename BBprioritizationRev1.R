@@ -80,7 +80,7 @@ BBsdm<-function(spp, spDF, biasfile)  {
   #range of species estimate
   calcsppRange <- function(x){
     spprange<- x
-    spprange[spprange>0] <- NA
+    spprange[spprange <= 0] <- NA
     spprange<-spprange[!is.na(spprange)]
     spprange<- ncell(spprange)/ncell(current)
     spprange<-(spprange)*1717662
@@ -318,6 +318,69 @@ ggplot(data=error, aes(x=Climate, y=mean, fill=Status))+
   scale_fill_manual(values=c("#EAC435", "#345995"))+
   xlab("")+ ylab("Proportion of distribution")+scale_y_continuous(expand=c(0,0), breaks=seq(0, .70, .10))
 
+#### percent area with >50% suitability figure
+library(ggplot2)
+library(gridExtra)
+library(forcats)
+library(raster)
+
+#the species range did not calculate properly due to a typo in the function so recalculating here
+currentrangestack <- stack("Outputs/CurrentStackAll.tif")
+future26rangestack<-stack("Outputs/Future26StackAll.tif")
+future85rangestack<-stack("Outputs/Future85StackAll.tif")
+bumblebeenames <- c("affinis", "appositus", "auricomus", "bifarius", "bimaculatus", "bohemicus", "borealis", "caliginosus", "centralis", "citrinus", "crotchii", "cryptarum", "fervidus", "flavidus", "flavifrons", "fraternus", "frigidus", "griseocollis", "huntii", "impatiens", "insularis", "jonellus", "kirbiellus", "kluanensis", "melanopygus", "mixtus", "morrisoni", "neoboreus", "nevadensis", "occidentalis", "pensylvanicus", "perplexus", "polaris", "rufocinctus", "sandersoni", "sitkensis", "sylvicola", "ternarius", "terricola", "vagans", "vandykei", "vosnesenskii")
+names(currentrangestack) <- bumblebeenames
+
+calcsppRange <- function(x){
+  spprange<- x
+  spprange[spprange <= 0.001] <- NA
+  spprange<-spprange[!is.na(spprange)]
+  spprange<- ncell(spprange)/ncell(x)
+  spprange<-(spprange)*1717662
+  return(spprange)
+}
+outRange <- lapply(1:nlayers(currentrangestack), function(i){
+  calcsppRange(currentrangestack[[i]])
+})
+currentRanges <- data.frame(Species = bumblebeenames, CurrentRange= do.call(c, outRange))
+
+outRange <- lapply(1:nlayers(future26rangestack), function(i){
+  calcsppRange(future26rangestack[[i]])
+})
+future26Ranges <- data.frame(Species = bumblebeenames, future26Range= do.call(c, outRange))
+
+outRange <- lapply(1:nlayers(future85rangestack), function(i){
+  calcsppRange(future85rangestack[[i]])
+})
+future85Ranges <- data.frame(Species = bumblebeenames, future85Range= do.call(c, outRange))
+
+
+prop50 <- read.csv("Outputs/allModels.csv", stringsAsFactors=FALSE)
+library(tidyverse)
+prop50 <- prop50 %>% filter(!(species %in% c("natvigi","suckleyi"))) %>% 
+  dplyr::select(species, Current= propcurrent,Future26= prop26, Future85=prop85) %>% 
+  gather(climate, proportion, Current:Future85) %>% 
+  mutate(group = rep(rep(c("groupA","groupB"),each=21),3))
+
+
+groupA <- prop50[prop50$group=="groupA",]
+groupA$species <- as.factor(groupA$species)
+groupB <- prop50[prop50$group=="groupB",]
+groupB$species <- as.factor(groupB$species)
+
+plot1 <- ggplot(groupA, aes(x= fct_rev(species), y=proportion, fill=fct_rev(climate))) + geom_bar(stat="identity", position="dodge") + coord_flip() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        panel.background = element_blank(), axis.line = element_line(colour = "black")) +
+  scale_fill_manual(values=c("#403D58", "#FC7753", "#FAFF81")) +
+  xlab("")+ ylab("Percent of range with > 0.5 predicted suitability")+scale_y_continuous(expand=c(0,0))
+
+plot2 <- ggplot(groupB, aes(x= fct_rev(species), y=proportion, fill=fct_rev(climate))) + geom_bar(stat="identity", position="dodge") + coord_flip() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        panel.background = element_blank(), axis.line = element_line(colour = "black")) +
+  scale_fill_manual(values=c("#403D58", "#FC7753", "#FAFF81")) +
+  xlab("")+ ylab("Percent of range with > 0.5 predicted suitability")+scale_y_continuous(expand=c(0,0))
+
+grid.arrange(plot1, plot2, ncol=2)
 
 
 
