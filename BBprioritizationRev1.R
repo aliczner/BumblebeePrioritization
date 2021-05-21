@@ -382,6 +382,104 @@ plot2 <- ggplot(groupB, aes(x= fct_rev(species), y=proportion, fill=fct_rev(clim
 
 grid.arrange(plot1, plot2, ncol=2)
 
+### change in latitude and elevation table
+#libraries
+library(raster)
+library(dplyr)
+
+#datafiles
+elevation<-raster("CAN_msk_alt.grd")
+s1a<-raster("prioritizrResults/s1aMinSet17.tif")
+s2a<-raster("prioritizrResults/s2aMinSet30.tif")
+s3a<-raster("prioritizrResults/s3aMinSet50.tif")
+s1b<-raster("prioritizrResults/s1bMinSet17RCP26.tif")
+s2b<-raster("prioritizrResults/s2bMinSet30RCP26.tif")
+s3b<-raster("prioritizrResults/s3bMinset50RCP26.tif")
+s1c<-raster("prioritizrResults/s1cMinSet17RCP85.tif")
+s2c<-raster("prioritizrResults/s2cMinSet30RCP85.tif")
+s3c<-raster("prioritizrResults/s3cMinSet50RCP85.tif")
+
+east<-extent(-90, -54.27083, 42.85417, 83.0625) #separating into east and west to account for the Rockies
+west<-extent(-141, -90, 41.66667, 83.125)
+
+latitudefun<-function(future, current){
+  currentp<-rasterToPoints(current, function(x) x>0, spatial=TRUE)
+  futurep<-rasterToPoints(future, function(x) x>0, spatial=TRUE)
+  ## Current
+  currentE<-crop(current, east, keepres=F, snap="in")
+  currentEp<-rasterToPoints(currentE, function(x) x>0, spatial=TRUE)
+  currentW<-crop(current, west, keepres=T, snap="in")
+  currentWp<-rasterToPoints(currentW, function(x) x>0, spatial=TRUE)
+  ## Future
+  futureE<-crop(future, east, keepres=T, snap="in")
+  futureW<-crop(future, west, keepres=T, snap="in")
+  differenceEp<-rasterToPoints(futureE, function(x) x>0, spatial=TRUE)
+  differenceWp<-rasterToPoints(futureW, function(x) x>0, spatial=TRUE)
+  dataOut <- data.frame( extent=c("current Canada","future Canada","current east", "future east","current west","future west"),
+                         latitude=c(mean(coordinates(currentp)[,2]),mean(coordinates(futurep)[,2]),
+                                    mean(coordinates(currentEp)[,2]),mean(coordinates(differenceEp)[,2]),
+                                    mean(coordinates(currentWp)[,2]),mean(coordinates(differenceWp)[,2])))
+  return(dataOut)
+}
+
+elevationfun<-function(future, current){
+  currentp<-rasterToPoints(current, function(x) x>0, spatial=TRUE)
+  futurep<-rasterToPoints(future, function(x) x>0, spatial=TRUE)
+  ## Current
+  currentE<-crop(current, east, keepres=F, snap="in")
+  currentEp<-rasterToPoints(currentE, function(x) x>0, spatial=TRUE)
+  currentW<-crop(current, west, keepres=T, snap="in")
+  currentWp<-rasterToPoints(currentW, function(x) x>0, spatial=TRUE)
+  ## Future
+  futureE<-crop(future, east, keepres=T, snap="in")
+  futureW<-crop(future, west, keepres=T, snap="in")
+  futureEp<-rasterToPoints(futureE, function(x) x>0, spatial=TRUE)
+  futureWp<-rasterToPoints(futureW, function(x) x>0, spatial=TRUE)
+  
+  elevfut<-raster::extract(elevation, futurep)
+  elevcur<-raster::extract(elevation, currentp)
+  elevcurE<-raster::extract(elevation, currentEp)
+  elevcurW<-raster::extract(elevation, currentWp)
+  elevfutE<-raster::extract(elevation, futureEp)
+  elevfutW<-raster::extract(elevation, futureWp)
+  dataOut <- data.frame( extent=c("future Canada","current Canada","current east", "current west","future east","future west"),
+                         elevate=c(mean(elevfut, na.rm=T),mean(elevcur, na.rm=T),
+                                   mean(elevcurE, na.rm=T),mean(elevcurW,na.rm=T),
+                                   mean(elevfutE,na.rm=T),mean(elevfutW,na.rm=T)))
+  return(dataOut)
+}
+
+currentList <- list(s1a, s1a, s2a, s2a, s3a, s3a)
+futureList<-list(s1b, s1c, s2b, s2c, s3b, s3c)
+
+#elevation
+allChange <- data.frame()
+for(i in 1:6){
+  temp <- elevationfun(futureList[[i]], currentList[[i]])
+  temp[,"iteration"] <- names(futureList[[i]])
+  allChange <- rbind(allChange,temp)
+}
+allChange[,"scenario"]<- gsub(".*RCP","",allChange$iteration)
+
+
+allDone<-allChange %>% group_by (extent, scenario) %>% summarise(mean=mean(elevate), se=sd(elevate)/sqrt(length(elevate))) %>% data.frame()
+allDone[1:6,"scenario"] <- "current"
+allDone <- allDone[!duplicated(allDone),]
+
+#latitude
+allChange <- data.frame()
+for(i in 1:6){
+  temp <- latitudefun(futureList[[i]], currentList[[i]])
+  temp[,"iteration"] <- names(futureList[[i]])
+  allChange <- rbind(allChange,temp)
+}
+allChange[,"scenario"]<- gsub(".*RCP","",allChange$iteration)
+
+allDone2<-allChange %>% group_by (extent, scenario) %>% summarise(mean=mean(latitude), se=sd(latitude)/sqrt(length(latitude))) %>% data.frame()
+allDone2[1:6,"scenario"] <- "current"
+allDone2 <- allDone2[!duplicated(allDone2),]
+
+
 
 
 #####################
