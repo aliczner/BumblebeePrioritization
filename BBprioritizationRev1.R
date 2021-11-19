@@ -9,6 +9,7 @@ library(tidyverse) #for combining outputs, data manipulation and cleaning
 library(usdm) #vif function for checking collinearity
 library(ENMeval) #function for MaxEnt to check feature class settings and regularization settings
 library(dismo) #used to add background points to the SDM
+library(rgdal) #needed for the buffer cropping
 
 ## specify temporary directory for rasters
 #rasterOptions(tmpdir= "D://Documents//Temp")
@@ -28,9 +29,9 @@ names(current) <- paste0(rep("bio",19),1:19)
 names(future26) <- paste0(rep("bio",19),1:19)
 names(future85) <- paste0(rep("bio",19),1:19)
 
-########################
+#########################
 ### SDM Climate Analyses for current and future
-#######################
+########################
 
 speciesList <- sort(as.character(unique(bombus$species)))
 
@@ -122,9 +123,100 @@ for(i in 1:44){
   BBsdm( spp=speciesList[i], spDF = bombus,  biasfile=bias)
   print(i)
 }
-#######################################################################
+
+#some species were predicted well outside of their distribution
+#to fix this, need to crop the predicted distribution to a buffer of the species distribution
+#use the historical distribution of species and make a MCP
+
+#all bumble bee records
+library(dplyr)
+
+allbumble<-read.csv("D:\\Documents\\PhD\\Chapter 3\\North America Datafiles\\all.shareable.bbna.03.10.2020.csv")
+allbumble %>%
+filter(allbumble$species != "bombus")
+data <-allbumble %>%
+  dplyr::filter(species != "") %>%
+  dplyr::filter(latitude != "") %>%
+  dplyr::filter(longitude != "")
+data<-data %>%
+filter(!species%in%c("cockerelli","distinguendus","variabilis", "impatiens/bimaculatus", "franklini"))
+historical<-data
+historical.sp<-historical[,c("species", "latitude", "longitude")]
+coordinates(historical.sp)<-~longitude+latitude # assigns the occurrences to spatial points data frame
+proj4string(historical.sp)<-CRS("+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0")
+
+library(adehabitatHR) #minimum convex polygon package
+
+histmcp<-mcp(historical.sp, percent=100) #function to calculate minimum convex polygon
+
+for (i in 1:44){
+  tempBuffer<-raster::buffer(subset(histmcp, id==speciesList[i]), width=2.70, dissolve=TRUE)
+  tempBuffer<-SpatialPolygonsDataFrame(tempBuffer, data=data.frame(id=speciesList[i]), match.ID = F)
+  rgdal::writeOGR(tempBuffer, dsn="./buffers", layer=paste0(speciesList[i], "buffer"), driver="ESRI Shapefile", overwrite_layer = T)
+  print(i)
+}
+
+
+#load species SDM raster stack
+currentsp<-stack("outputs//CurrentUpdated.grd")
+future26sp<-stack("outputs//Future26Updated.grd")
+future85sp<-stack("outputs//Future85Updated.grd")
+
+#removing low predictability from output
+polyCAN <- getData("GADM", country = "CAN", level = 1) #obtaining Canada polygon
+
+#cropping rasterstacks by Canada
+#current climate
+cropstack<-crop(currentsp, polyCAN)
+maskstack<-mask(cropstack, polyCAN) 
+stackspmin<-maskstack
+stackspmin <- reclassify(stackspmin, cbind(-Inf, 0.2, 0), right=FALSE)
+writeRaster(stackspmin, "CurrentStack2.5min.grd", overwrite=T)
+#future climate RCP 2.6
+cropstack2<-crop(future26sp, polyCAN)
+maskstack2<-mask(cropstack2, polyCAN) 
+stackspmin2<-maskstack2
+stackspmin2 <- reclassify(stackspmin2, cbind(-Inf, 0.2, 0), right=FALSE)
+writeRaster(stackspmin2, "Future26Stack2.5min.grd", overwrite=T)
+#future climate RCP 8.5
+cropstack3<-crop(future85sp, polyCAN)
+maskstack3<-mask(cropstack3, polyCAN) 
+stackspmin3<-maskstack3
+stackspmin3 <- reclassify(stackspmin3, cbind(-Inf, 0.2, 0), right=FALSE)
+writeRaster(stackspmin3, "Future85Stack2.5min.grd", overwrite=T)
+
+#loading masked and low predicted value removed data
+currentspmin<-stack("CurrentStack2.5min.grd")
+future26spmin<-stack("Future26Stack2.5min.grd")
+future85spmin<-stack("Future85Stack2.5min.grd")
+
+#gather all polygons for the buffer
+allbuffs<-list.files("buffers", pattern =".shp$", full.names = T)
+
+for (i in 1:44) {
+    tempBuffer <- readOGR(allbuffs[i]) ## load the buffer for this iteration
+    mask(currentspmin[[i]], tempBuffer, filename=paste0("MaskedOutput//currentmasked//",speciesList[i],"currentmasked.tif"), overwrite=T)
+    mask(future26spmin[[i]], tempBuffer , filename=paste0("MaskedOutput//future26masked//",speciesList[i],"future26masked.tif"), overwrite=T)
+    mask(future85spmin[[i]], tempBuffer , filename=paste0("MaskedOutput//future85masked//",speciesList[i],"future85masked.tif"), overwrite=T)
+  print(i)
+}
+
+#make pdfs of the outputs
+speciesfiles<-list.files("MaskedOutput//currentmasked",full.names=T)
+for(i in 1:44){
+  sppname<-gsub("currentmasked.tif", "",speciesfiles[i])
+  sppname<-gsub("MaskedOutput//currentmasked/", "",sppname)
+  pdf(paste0("maps/",sppname,"Map.pdf"), useDingbats = F)
+  plot(raster(speciesfiles[i]),main=sppname)
+  points<-subset(bombus,species==sppname)
+  plot(points,add=TRUE)
+  plot(polyCAN, add=TRUE)
+  dev.off()
+}
+
+########################################################################
 #Prioritizr analyses
-#######################################################################
+########################################################################
 
 #libraries
 library(prioritizr)
@@ -225,9 +317,9 @@ p2c<- bb_priormin(features = future85stackmin, rel_tar = 0.3, raster_name =  "pr
 ### Problem 3c add_min_set objective, 50% (nature needs half), future climate rcp 8.5
 p3c <- bb_priormin(features= future85stackmin, rel_tar = 0.5, raster_name =  "prioritizrResults//s3cMinSet50RCP85.tif")
 
-##################
+###################
 #Prioritizr results figures
-##################
+###################
 
 ## prioritizr results figure 1 add min set objective
 s1a<-raster("prioritizrResults/s1aMinSet17.tif")
@@ -295,7 +387,7 @@ ggplot(data=error, aes(x=reorder(landcover, -mean), y=mean, fill=Climate))+
   scale_fill_manual(values=c("#FAFF81", "#FC7753", "#403D58"))+
   xlab("Landcover Class")+ ylab("Percent Cover")+scale_y_continuous(expand=c(0,0))
 
-###Proportion of common and at-risk species within protected asreas
+###Proportion of common and at-risk species within protected areas
 
 ##combinbing csv files for species representation outputs
 library(tidyverse)
@@ -482,9 +574,9 @@ allDone2 <- allDone2[!duplicated(allDone2),]
 
 
 
-#####################
+########################
 ###Climate Data Prepping
-#####################
+########################
 
 ##Current climate
 currentclim<-list.files("current", full.names = TRUE, pattern=".bil")
@@ -539,9 +631,9 @@ all85 <- do.call(stack, future85)
 names(all85) <- paste0(rep("bio",19),1:19)
 writeRaster(all85, "Future8.5.grd")
 
-###############
+##################
 #Prioritizr data prepping
-###############
+##################
 
 polyCAN <- getData("GADM", country = "CAN", level = 1)
 
