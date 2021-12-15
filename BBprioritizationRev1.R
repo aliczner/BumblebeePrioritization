@@ -67,8 +67,8 @@ for (i in 1:44){
 #make pdfs of the outputs
 speciesfiles<-list.files("Outputs//current",full.names=T)
 for(i in 1:44){
-  sppname<-gsub("current.tif", "",speciesfiles[i])
-  sppname<-gsub("Outputs//current/", "",sppname)
+  sppname<-gsub(".tif", "",speciesfiles[i])
+  sppname<-gsub("Outputs//current/Current_", "",sppname)
   pdf(paste0("maps/",sppname,"Map.pdf"), useDingbats = F)
   plot(raster(speciesfiles[i]),main=sppname)
   points<-subset(bombus,species==sppname)
@@ -195,19 +195,23 @@ writeRaster(currentstackmin, "Outputs//CurrentStack.grd", overwrite=T)
 future26list<-list.files("Outputs//future26",full.names=T)
 future26stack<-stack(future26list)
 future26stackmin<-future26stack
-future26stackmin<-crop(future26stackmin, polyCAN)
+future26stackmin<-crop(future26stackmin, canada1)
+future26stackmin[canada1==1 & is.na(future26stackmin)] <- 0
+future26stackmin<-mask(future26stackmin, polyCAN) 
 future26stackmin[future26stackmin<0.2]<-0
 writeRaster(future26stackmin, "Outputs//Future26Stack.grd", overwrite=T)
 
 future85list<-list.files("Outputs//future85",full.names=T)
 future85stack<-stack(future85list)
 future85stackmin<-future85stack
-future85stackmin<-crop(future85stackmin, polyCAN)
+future85stackmin<-crop(future85stackmin, canada1)
+future85stackmin[canada1==1 & is.na(future85stackmin)] <- 0
+future85stackmin<-mask(future85stackmin, polyCAN) 
 future85stackmin[future85stackmin<0.2]<-0
-writeRaster(future85stack, "Outputs//Future85Stack.grd")
+writeRaster(future85stackmin, "Outputs//Future85Stack.grd", overwrite=T)
 
-#datafiles
-currentstack<-stack("Outputs//CurrentStack.grd")
+###datafiles
+currentstack<-stack("Outputs//CurrentStack.gri")
 future26stack<-stack("Outputs//Future26Stack.grd")
 crs(future26stack)<-"+proj=longlat +datum=WGS84 +no_defs" 
 future85stack<-stack("Outputs//Future85Stack.grd")
@@ -221,6 +225,8 @@ newprotect[newprotect != 0 ] <- 1 # assigning areas that are not protected areas
 newprotect2 <- resample(newprotect, currentstack, method="ngb")
 newprotect2 <- crop(newprotect2, canada)
 landcover <- stack("newlandstack.tif") # MODIS landcover raster
+
+currentstackless<-currentstack[[-c(11, 16, 17, 32)]] #dropping crotchii, fraternus, frigidus, polaris
 
 ## add min set objective function
 
@@ -296,8 +302,11 @@ bb_priormin <- function(pu = canada, features = currentstack, rel_tar = 0.17,
 ### Problem 1a add_min_set objective, 17%, current climate
 p1a <- bb_priormin(raster_name =  "prioritizrResults//s1aMinSet17.tif")
 
+p1a2 <- bb_priormin(features = currentstackless, raster_name =  "prioritizrResults//s1a2MinSet17.tif")
 ### Problem 2a add_min_set objective, 30% (Canada 2050 biodiversity target), current climate
 p2a <- bb_priormin( rel_tar = 0.3, raster_name =  "prioritizrResults//s2aMinSet30.tif")
+
+p2a2<-bb_priormin( features= currentstackless, rel_tar = 0.3, raster_name =  "prioritizrResults//s2a2MinSet30.tif")
 
 ### Problem 3a add_min_set objective, 50% (nature needs half), current climate
 p3a<- bb_priormin( rel_tar = 0.5, raster_name =  "prioritizrResults//s3aMinSet50.tif")
@@ -305,106 +314,26 @@ p3a<- bb_priormin( rel_tar = 0.5, raster_name =  "prioritizrResults//s3aMinSet50
 ### Problem 1b add_min_set_objective, 17% target, future climate rcp 2.6
 p1b <- bb_priormin(features = future26stack, raster_name =  "prioritizrResults//s1bMinSet17RCP26.tif")
 
-p1b3<-bb_priormin(features = future26less, raster_name =  "prioritizrResults//s1b3MinSet17RCP26.tif")
-
 ### Problem 2b add_min_set_objective, 30% target, future climate rcp 2.6
 p2b<- bb_priormin(features = future26stack, rel_tar = 0.3, raster_name =  "prioritizrResults//s2bMinSet30RCP26.tif")
-
-p2b3 <- bb_priormin(features = future26less, rel_tar = 0.3,  raster_name =  "prioritizrResults//s2b3MinSet17RCP26.tif")
 
 ### Problem 3b add_min_set objective, 50% (nature needs half), future climate rcp 2.6
 p3b <- bb_priormin(features= future26stack, rel_tar = 0.5, raster_name =  "prioritizrResults//s3bMinSet50RCP26.tif")
 
-p3b3 <- bb_priormin(features= future26less, rel_tar = 0.5, raster_name =  "prioritizrResults//s3b3MinSet50RCP26.tif")
-
 ### Problem 1c add_min_set_objective, 17% target, future climate rcp 8.5
 p1c <- bb_priormin(features = future85stack, raster_name =  "prioritizrResults//s1cMinSet17RCP85.tif")
-
-p1c3 <- bb_priormin(features = future85less, raster_name =  "prioritizrResults//s1c3MinSet17RCP85.tif")
 
 ### Problem 2c add_min_set_objective, 30% target, future climate rcp 8.5
 p2c<- bb_priormin(features = future85stack, rel_tar = 0.3, raster_name =  "prioritizrResults//s2cMinSet30RCP85.tif")
 
-p2c3<- bb_priormin(features = future85less, rel_tar = 0.3, raster_name =  "prioritizrResults//s2c3MinSet30RCP85.tif")
-
 ### Problem 3c add_min_set objective, 50% (nature needs half), future climate rcp 8.5
 p3c <- bb_priormin(features= future85stack, rel_tar = 0.5, raster_name =  "prioritizrResults//s3cMinSet50RCP85.tif")
-
-p3c3 <- bb_priormin(features= future85less, rel_tar = 0.5, raster_name =  "prioritizrResults//s3c3MinSet50RCP85.tif")
-
-####
-####Min set at-risk weighting
-####
-
-### Problem 4a add_min_set objective, 17%, current climate
-p4a <- bb_priorrisk(raster_name =  "prioritizrResults//s4aMinRisk17.tif")
-
-### Problem 5a add_min_set objective, 30% (Canada 2050 biodiversity target), current climate
-p5a <- bb_priorrisk( rel_tar = risk2current, raster_name =  "prioritizrResults//s5aMinRisk30.tif")
-
-### Problem 6a add_min_set objective, 50% (nature needs half), current climate
-p6a<- bb_priorrisk( rel_tar = risk3current, raster_name =  "prioritizrResults//s6aMinRisk50.tif")
-
-### Problem 4b add_min_set_objective, 17% target, future climate rcp 2.6
-p4b <- bb_priorrisk(features = future26stack, rel_tar=risk1future, raster_name ="prioritizrResults//s4bMinRisk17RCP26.tif")
-
-### Problem 5b add_min_set_objective, 30% target, future climate rcp 2.6
-p5b<- bb_priorrisk(features = future26stack, rel_tar = risk2future, raster_name =  "prioritizrResults//s5bMinRisk30RCP26.tif")
-
-### Problem 6b add_min_set objective, 50% (nature needs half), future climate rcp 2.6
-p6b <- bb_priorrisk(features= future26stack, rel_tar =risk3future, raster_name =  "prioritizrResults//s6bMinRisk50RCP26.tif")
-
-### Problem 4c add_min_set_objective, 17% target, future climate rcp 8.5
-p4c <- bb_priorrisk(features = future85stack, rel_tar= risk1future, raster_name = "prioritizrResults//s4cMinRisk17RCP85.tif")
-
-### Problem 5c add_min_set_objective, 30% target, future climate rcp 8.5
-p5c<- bb_priorrisk(features = future85stack, rel_tar = risk2future, raster_name = "prioritizrResults//s5cMinRisk30RCP85.tif")
-
-### Problem 3c add_min_set objective, 50% (nature needs half), future climate rcp 8.5
-p6c <- bb_priorrisk(features= future85stack, rel_tar = risk3future, raster_name =  "prioritizrResults//s6cMinRisk50RCP85.tif")
-
 
 ###################
 #Prioritizr results figures
 ###################
 
 ## prioritizr results figure 1 add min set objective with problematic speceis removed
-s1a3<-raster("prioritizrResults/s1a3MinSet17.tif")
-s2a3<-raster("prioritizrResults/s2a3MinSet30.tif")
-s3a3<-raster("prioritizrResults/s3a3MinSet50.tif")
-s1b3<-raster("prioritizrResults/s1b3MinSet17RCP26.tif")
-s2b3<-raster("prioritizrResults/s2b3MinSet17RCP26.tif")
-s3b3<-raster("prioritizrResults/s3b3Minset50RCP26.tif")
-s1c3<-raster("prioritizrResults/s1c3MinSet17RCP85.tif")
-s2c3<-raster("prioritizrResults/s2c3MinSet30RCP85.tif")
-s3c3<-raster("prioritizrResults/s3c3MinSet50RCP85.tif")
-
-topleft<-(s1b3*1.1)-s1a3
-topmid<-(s2b3*1.1)-s2a3
-topright<-(s3b3*1.1)-s3a3
-midleft<-(s1c3*1.1)-s1a3
-midmid<-(s2c3*1.1)-s2a3
-midright<-(s3c3*1.1)-s3a3
-botleft<-s1a3*s1b3*s1c3
-botmid<-s2a3*s2b3*s2c3
-botright<-s3a3*s3b3*s3c3
-
-pdf("FigureMinSetLess.pdf", width = 16, height = 16, useDingbats = F)
-par(mfrow = c(3, 3))
-par(mar = c(4.5, 4.5, 0, 0))
-plot(topleft, col = c("#D4B483","#E3E3E3", "#416788","#416788"), legend = FALSE, xaxt = "n", cex.axis = 2, las = 1, xlim=c(-145,-52))
-plot(topmid, col = c("#D4B483","#E3E3E3", "#416788","#416788"), legend = FALSE, xaxt = "n", yaxt = "n", xlim=c(-145,-52))
-plot(topright, col = c("#D4B483","#E3E3E3", "#416788","#416788"), legend = FALSE, xaxt = "n", yaxt = "n", xlim=c(-145,-52))
-plot(midleft, col = c("#D4B483","#E3E3E3", "#416788","#416788"), legend = FALSE, xaxt = "n", cex.axis = 2, las = 1, xlim=c(-145,-52))
-plot(midmid, col = c("#D4B483","#E3E3E3", "#416788","#416788"), legend = FALSE, xaxt = "n", yaxt = "n", xlim=c(-145,-52))
-plot(midright, col = c("#D4B483","#E3E3E3", "#416788","#416788"), legend = FALSE, xaxt = "n", yaxt = "n", xlim=c(-145,-52))
-plot(botleft, col = c("#E3E3E3", "#51A3A3"), legend = FALSE, cex.axis = 2, las = 1, xlim=c(-145,-52))
-plot(botmid, col = c("#E3E3E3", "#51A3A3"), legend = FALSE, yaxt = "n", cex.axis = 2, xlim=c(-145,-52))
-plot(botright, col = c("#E3E3E3", "#51A3A3"), legend = FALSE, yaxt = "n", cex.axis = 2, xlim=c(-145,-52))
-dev.off()
-
-#prioritizr results all species
-
 s1a<-raster("prioritizrResults/s1aMinSet17.tif")
 s2a<-raster("prioritizrResults/s2aMinSet30.tif")
 s3a<-raster("prioritizrResults/s3aMinSet50.tif")
@@ -438,42 +367,6 @@ plot(botleft, col = c("#E3E3E3", "#51A3A3"), legend = FALSE, cex.axis = 2, las =
 plot(botmid, col = c("#E3E3E3", "#51A3A3"), legend = FALSE, yaxt = "n", cex.axis = 2, xlim=c(-145,-52))
 plot(botright, col = c("#E3E3E3", "#51A3A3"), legend = FALSE, yaxt = "n", cex.axis = 2, xlim=c(-145,-52))
 dev.off()
-
-## prioritizr results figure 2 add min set objective weighted by species risk
-s4a<-raster("prioritizrResults/s4aMinRisk17.tif")
-s5a<-raster("prioritizrResults/s5aMinRisk30.tif")
-s6a<-raster("prioritizrResults/s6aMinRisk50.tif")
-s4b<-raster("prioritizrResults/s4bMinRisk17RCP26.tif")
-s5b<-raster("prioritizrResults/s5bMinRisk30RCP26.tif")
-s6b<-raster("prioritizrResults/s6bMinRisk50RCP26.tif")
-s4c<-raster("prioritizrResults/s4cMinRisk17RCP85.tif")
-s5c<-raster("prioritizrResults/s5cMinRisk30RCP85.tif")
-s6c<-raster("prioritizrResults/s6cMinRisk50RCP85.tif")
-
-topleft<-(s4b*1.1)-s4a
-topmid<-(s5b*1.1)-s5a
-topright<-(s6b*1.1)-s6a
-midleft<-(s4c*1.1)-s4a
-midmid<-(s5c*1.1)-s5a
-midright<-(s6c*1.1)-s6a
-botleft<-s4a*s4b*s4c
-botmid<-s5a*s5b*s5c
-botright<-s6a*s6b*s6c
-
-pdf("FigureMinRisk.pdf", width = 16, height = 16, useDingbats = F)
-par(mfrow = c(3, 3))
-par(mar = c(4.5, 4.5, 0, 0))
-plot(topleft, col = c("#D4B483","#E3E3E3", "#416788","#416788"), legend = FALSE, xaxt = "n", cex.axis = 2, las = 1, xlim=c(-145,-52))
-plot(topmid, col = c("#D4B483","#E3E3E3", "#416788","#416788"), legend = FALSE, xaxt = "n", yaxt = "n", xlim=c(-145,-52))
-plot(topright, col = c("#D4B483","#E3E3E3", "#416788","#416788"), legend = FALSE, xaxt = "n", yaxt = "n", xlim=c(-145,-52))
-plot(midleft, col = c("#D4B483","#E3E3E3", "#416788","#416788"), legend = FALSE, xaxt = "n", cex.axis = 2, las = 1, xlim=c(-145,-52))
-plot(midmid, col = c("#D4B483","#E3E3E3", "#416788","#416788"), legend = FALSE, xaxt = "n", yaxt = "n", xlim=c(-145,-52))
-plot(midright, col = c("#D4B483","#E3E3E3", "#416788","#416788"), legend = FALSE, xaxt = "n", yaxt = "n", xlim=c(-145,-52))
-plot(botleft, col = c("#E3E3E3", "#51A3A3"), legend = FALSE, cex.axis = 2, las = 1, xlim=c(-145,-52))
-plot(botmid, col = c("#E3E3E3", "#51A3A3"), legend = FALSE, yaxt = "n", cex.axis = 2, xlim=c(-145,-52))
-plot(botright, col = c("#E3E3E3", "#51A3A3"), legend = FALSE, yaxt = "n", cex.axis = 2, xlim=c(-145,-52))
-dev.off()
-
 
 ####landcover bar plot figure
 library(ggplot2)
