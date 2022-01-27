@@ -87,7 +87,7 @@ BBsdm<-function(spp, spDF, biasfile)  {
   tempSpp <- subset(spDF, species == spp)
   background <- nrow(tempSpp)*10
   
-  ## load buffer - least polygon extent
+  ## load buffer - least polygon extent for restricting SDM predictions
   sppBuffer <- readOGR(dsn="./buffers", layer=paste0(spp,"buffer"))
   
   ## Mask climate to extent
@@ -164,12 +164,18 @@ for(i in 1:44){
   print(i)
 }
 
+library(tidyverse)
+MaxEntcsv <- list.files(path ="Outputs/speciesoutput", pattern = ".csv", full.names = TRUE)
+MaxEntlist<-MaxEntcsv %>% 
+  setNames(nm= .) %>%
+  map_dfr(~read_csv(.x, col_types=cols(), col_names=FALSE), .id="file_name")
+write.csv(MaxEntlist, "Outputs/speciesoutput/AllMaxEnts.csv")
 
 ########################################################################
 #Prioritizr analyses
 ########################################################################
 
-#libraries
+#libraries for prioritizr
 library(prioritizr)
 library(raster)
 library(rgdal)
@@ -210,7 +216,9 @@ future85stackmin<-mask(future85stackmin, polyCAN)
 future85stackmin[future85stackmin<0.2]<-0
 writeRaster(future85stackmin, "Outputs//Future85Stack.grd", overwrite=T)
 
-###datafiles
+####
+###datafiles made from prep above
+###
 currentstack<-stack("Outputs//CurrentStack.gri")
 future26stack<-stack("Outputs//Future26Stack.grd")
 crs(future26stack)<-"+proj=longlat +datum=WGS84 +no_defs" 
@@ -226,7 +234,6 @@ newprotect2 <- resample(newprotect, currentstack, method="ngb")
 newprotect2 <- crop(newprotect2, canada)
 landcover <- stack("newlandstack.tif") # MODIS landcover raster
 
-currentstackless<-currentstack[[-c(11, 16, 17, 32)]] #dropping crotchii, fraternus, frigidus, polaris
 
 ## add min set objective function
 
@@ -274,6 +281,15 @@ bb_priormin <- function(pu = canada, features = currentstack, rel_tar = 0.17,
   return(list(p0 = p0, s0 = s0, f0 = f0, zn_p = zn_p, fr_s = fr_s, s0landcover = s0landcover))
 }
 
+#testing what happens with removing predicted occurrences less than 0.5
+currentstack2<-currentstack
+currentstack2[currentstack2<0.5]<-0
+future26stack2<-future26stack
+future26stack2[future26stack2<0.5]<-0
+future85stack2<-future85stack
+future85stack2[future85stack2<0.5]<-0
+
+
 ##########
 ##Min set function with higher targets for at-risk 
 ##########
@@ -297,43 +313,60 @@ bb_priormin <- function(pu = canada, features = currentstack, rel_tar = 0.17,
                #0.50, 0.62, 0.50, 0.50, 0.50, 0.50, 0.50, 0.62, 0.62, 0.50, 0.50, 0.62, 0.62, 0.50,
                #0.62, 0.62, 0.50, 0.62, 0.50, 0.50, 0.50, 0.50, 0.50, 0.62, 0.50, 0.50, 0.50)
 
-####Min set
+######
+####Running min set prioritizr analyses
+######
 
 ### Problem 1a add_min_set objective, 17%, current climate
 p1a <- bb_priormin(raster_name =  "prioritizrResults//s1aMinSet17.tif")
 
-p1a2 <- bb_priormin(features = currentstackless, raster_name =  "prioritizrResults//s1a2MinSet17.tif")
+p1a2 <- bb_priormin(features = currentstack2, raster_name =  "prioritizrResults//s1a2MinSet17.tif")
+
 ### Problem 2a add_min_set objective, 30% (Canada 2050 biodiversity target), current climate
 p2a <- bb_priormin( rel_tar = 0.3, raster_name =  "prioritizrResults//s2aMinSet30.tif")
 
-p2a2<-bb_priormin( features= currentstackless, rel_tar = 0.3, raster_name =  "prioritizrResults//s2a2MinSet30.tif")
+p2a2 <- bb_priormin(features = currentstack2, rel_tar = 0.3, raster_name =  "prioritizrResults//s2a2MinSet30.tif")
 
 ### Problem 3a add_min_set objective, 50% (nature needs half), current climate
 p3a<- bb_priormin( rel_tar = 0.5, raster_name =  "prioritizrResults//s3aMinSet50.tif")
 
+p3a2<-bb_priormin( features= currentstack2, rel_tar = 0.5, raster_name =  "prioritizrResults//s3a2MinSet50.tif")
+
 ### Problem 1b add_min_set_objective, 17% target, future climate rcp 2.6
 p1b <- bb_priormin(features = future26stack, raster_name =  "prioritizrResults//s1bMinSet17RCP26.tif")
+
+p1b2 <- bb_priormin(features = future26stack2, raster_name =  "prioritizrResults//s1b2MinSet17RCP26.tif")
 
 ### Problem 2b add_min_set_objective, 30% target, future climate rcp 2.6
 p2b<- bb_priormin(features = future26stack, rel_tar = 0.3, raster_name =  "prioritizrResults//s2bMinSet30RCP26.tif")
 
+p2b2<- bb_priormin(features = future26stack2, rel_tar = 0.3, raster_name =  "prioritizrResults//s2b2MinSet30RCP26.tif")
+
 ### Problem 3b add_min_set objective, 50% (nature needs half), future climate rcp 2.6
 p3b <- bb_priormin(features= future26stack, rel_tar = 0.5, raster_name =  "prioritizrResults//s3bMinSet50RCP26.tif")
+
+p3b2 <- bb_priormin(features= future26stack2, rel_tar = 0.5, raster_name =  "prioritizrResults//s3b2MinSet50RCP26.tif")
 
 ### Problem 1c add_min_set_objective, 17% target, future climate rcp 8.5
 p1c <- bb_priormin(features = future85stack, raster_name =  "prioritizrResults//s1cMinSet17RCP85.tif")
 
+p1c2 <- bb_priormin(features = future85stack2, raster_name =  "prioritizrResults//s1c2MinSet17RCP85.tif")
+
 ### Problem 2c add_min_set_objective, 30% target, future climate rcp 8.5
 p2c<- bb_priormin(features = future85stack, rel_tar = 0.3, raster_name =  "prioritizrResults//s2cMinSet30RCP85.tif")
 
+p2c2<- bb_priormin(features = future85stack2, rel_tar = 0.3, raster_name =  "prioritizrResults//s2c2MinSet30RCP85.tif")
+
 ### Problem 3c add_min_set objective, 50% (nature needs half), future climate rcp 8.5
 p3c <- bb_priormin(features= future85stack, rel_tar = 0.5, raster_name =  "prioritizrResults//s3cMinSet50RCP85.tif")
+
+p3c2 <- bb_priormin(features= future85stack2, rel_tar = 0.5, raster_name =  "prioritizrResults//s3c2MinSet50RCP85.tif")
 
 ###################
 #Prioritizr results figures
 ###################
 
-## prioritizr results figure 1 add min set objective with problematic speceis removed
+## prioritizr results figure 1
 s1a<-raster("prioritizrResults/s1aMinSet17.tif")
 s2a<-raster("prioritizrResults/s2aMinSet30.tif")
 s3a<-raster("prioritizrResults/s3aMinSet50.tif")
@@ -355,6 +388,41 @@ botmid<-s2a*s2b*s2c
 botright<-s3a*s3b*s3c
 
 pdf("FigureMinSet.pdf", width = 16, height = 16, useDingbats = F)
+par(mfrow = c(3, 3))
+par(mar = c(4.5, 4.5, 0, 0))
+plot(topleft, col = c("#D4B483","#E3E3E3", "#416788","#416788"), legend = FALSE, xaxt = "n", cex.axis = 2, las = 1, xlim=c(-145,-52))
+plot(topmid, col = c("#D4B483","#E3E3E3", "#416788","#416788"), legend = FALSE, xaxt = "n", yaxt = "n", xlim=c(-145,-52))
+plot(topright, col = c("#D4B483","#E3E3E3", "#416788","#416788"), legend = FALSE, xaxt = "n", yaxt = "n", xlim=c(-145,-52))
+plot(midleft, col = c("#D4B483","#E3E3E3", "#416788","#416788"), legend = FALSE, xaxt = "n", cex.axis = 2, las = 1, xlim=c(-145,-52))
+plot(midmid, col = c("#D4B483","#E3E3E3", "#416788","#416788"), legend = FALSE, xaxt = "n", yaxt = "n", xlim=c(-145,-52))
+plot(midright, col = c("#D4B483","#E3E3E3", "#416788","#416788"), legend = FALSE, xaxt = "n", yaxt = "n", xlim=c(-145,-52))
+plot(botleft, col = c("#E3E3E3", "#51A3A3"), legend = FALSE, cex.axis = 2, las = 1, xlim=c(-145,-52))
+plot(botmid, col = c("#E3E3E3", "#51A3A3"), legend = FALSE, yaxt = "n", cex.axis = 2, xlim=c(-145,-52))
+plot(botright, col = c("#E3E3E3", "#51A3A3"), legend = FALSE, yaxt = "n", cex.axis = 2, xlim=c(-145,-52))
+dev.off()
+
+#### prioritizr results <0.5 removed test figure
+s1a2<-raster("prioritizrResults/s1a2MinSet17.tif")
+s2a2<-raster("prioritizrResults/s2a2MinSet30.tif")
+s3a2<-raster("prioritizrResults/s3a2MinSet50.tif")
+s1b2<-raster("prioritizrResults/s1b2MinSet17RCP26.tif")
+s2b2<-raster("prioritizrResults/s2b2MinSet30RCP26.tif")
+s3b2<-raster("prioritizrResults/s3b2Minset50RCP26.tif")
+s1c2<-raster("prioritizrResults/s1c2MinSet17RCP85.tif")
+s2c2<-raster("prioritizrResults/s2c2MinSet30RCP85.tif")
+s3c2<-raster("prioritizrResults/s3c2MinSet50RCP85.tif")
+
+topleft<-(s1b2*1.1)-s1a2
+topmid<-(s2b2*1.1)-s2a2
+topright<-(s3b2*1.1)-s3a2
+midleft<-(s1c2*1.1)-s1a2
+midmid<-(s2c2*1.1)-s2a2
+midright<-(s3c2*1.1)-s3a2
+botleft<-s1a2*s1b2*s1c2
+botmid<-s2a2*s2b2*s2c2
+botright<-s3a2*s3b2*s3c2
+
+pdf("FigureMinSet2.pdf", width = 16, height = 16, useDingbats = F)
 par(mfrow = c(3, 3))
 par(mar = c(4.5, 4.5, 0, 0))
 plot(topleft, col = c("#D4B483","#E3E3E3", "#416788","#416788"), legend = FALSE, xaxt = "n", cex.axis = 2, las = 1, xlim=c(-145,-52))
