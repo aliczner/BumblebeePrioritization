@@ -24,6 +24,15 @@ current<-stack("Currentclim.tif")
 future26<-stack("Future2.6.grd")
 future85<-stack("Future8.5.grd")
 
+### Jan 2023 ####
+
+#occidentalis has been split to subspecies. B.o.occidentalis is south of 55 deg N and 
+#B.o.mckayi is north of 55 deg N. Need to separate bombus dataset
+
+bombus2 <- bombus %>% 
+  mutate(species=ifelse(species=="occidentalis" & latitude > 55, "mckayi", species))
+# 230 mckay and 788 occidentalis
+
 ## Rename raster stacks to be the same names
 names(current) <- paste0(rep("bio",19),1:19)
 names(future26) <- paste0(rep("bio",19),1:19)
@@ -63,6 +72,36 @@ for (i in 1:44){
   rgdal::writeOGR(tempBuffer, dsn="./buffers", layer=paste0(speciesList[i], "buffer"), driver="ESRI Shapefile", overwrite_layer = T)
   print(i)
 }
+
+#need to add buffer for mckayi and a new occidentalis buffer
+mckayi<- subset(bombus2, species=="mckayi")
+
+historical2 <- historical %>% 
+  mutate(species=ifelse(species=="occidentalis" & latitude > 55, "mckayi", species))
+         
+histmckayi<-subset(historical2, species=="mckayi")
+histocc <- subset(historical2, species=="occidentalis")
+
+histmckayi.sp<-histmckayi[,c("species", "latitude", "longitude")]
+coordinates(histmckayi.sp)<-~longitude+latitude # assigns the occurrences to spatial points data frame
+proj4string(histmckayi.sp)<-"+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"
+
+histocc.sp <- histocc[,c ("species", "latitude", "longitude")]
+coordinates(histocc.sp) <-~longitude+latitude # assigns the occurrences to spatial points data frame
+proj4string(histocc.sp)<-"+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"
+
+library(adehabitatHR)
+histmckayi.mcp <- mcp(histmckayi.sp, percent=100)
+histocc.mcp <- mcp(histocc.sp, percent=100)
+
+mckayibuffer<-raster::buffer(subset(histmckayi.mcp), width=2.70, dissolve=TRUE)
+occidentalisbuffer <- raster::buffer(subset(histocc.mcp, width=2.70, dissolve=TRUE))
+
+sf::st_write(sf::st_as_sf(mckayibuffer), "mckayibuffer.shp")
+sf::st_write(sf::st_as_sf(occidentalisbuffer), "occidentalisbuffer.shp")
+
+rgdal::writeOGR(mckayibuffer, dsn=".", layer="mckayibuffer", driver ="ESRI Shapefile")
+rgdal::writeOGR(occidentalisbuffer, dsn=".", layer="occidentalisbuffer", driver ="ESRI Shapefile")
 
 #make pdfs of the outputs
 speciesfiles<-list.files("Outputs//current",full.names=T)
@@ -128,7 +167,7 @@ BBsdm<-function(spp, spDF, biasfile)  {
   writeRaster(predict85, paste0("Outputs//Future85_",spp,".tif", overwrite=T))
 
   
-  #species area for current climate
+  #species area
   #range of species estimate
   calcsppRange <- function(x){
     spprange<- x
@@ -186,6 +225,7 @@ library(dplyr)
 
 polyCAN <- getData("GADM", country = "CAN", level = 1)
 
+
 #need to create rasterstack of the masked outputs, crop to Canada, and remove low predicted values
 canada1 <- raster("CanadaPolyRaster5km.grd")
 
@@ -195,7 +235,7 @@ currentstackmin<-currentstack
 currentstackmin <- crop(currentstackmin, canada1)
 currentstackmin[canada1==1 & is.na(currentstackmin)] <- 0 ## assign non-predicted areas of Canada zero values
 currentstackmin<-mask(currentstackmin, polyCAN)  ## clip predicted area to Canada boundaries
-currentstackmin[currentstackmin<0.2]<-0
+currentstackmin[currentstackmin<0.1]<-0
 writeRaster(currentstackmin, "Outputs//CurrentStack.grd", overwrite=T)
 
 future26list<-list.files("Outputs//future26",full.names=T)
@@ -204,7 +244,7 @@ future26stackmin<-future26stack
 future26stackmin<-crop(future26stackmin, canada1)
 future26stackmin[canada1==1 & is.na(future26stackmin)] <- 0
 future26stackmin<-mask(future26stackmin, polyCAN) 
-future26stackmin[future26stackmin<0.2]<-0
+future26stackmin[future26stackmin<0.1]<-0
 writeRaster(future26stackmin, "Outputs//Future26Stack.grd", overwrite=T)
 
 future85list<-list.files("Outputs//future85",full.names=T)
@@ -213,7 +253,7 @@ future85stackmin<-future85stack
 future85stackmin<-crop(future85stackmin, canada1)
 future85stackmin[canada1==1 & is.na(future85stackmin)] <- 0
 future85stackmin<-mask(future85stackmin, polyCAN) 
-future85stackmin[future85stackmin<0.2]<-0
+future85stackmin[future85stackmin<0.1]<-0
 writeRaster(future85stackmin, "Outputs//Future85Stack.grd", overwrite=T)
 
 ####
@@ -236,6 +276,7 @@ landcover <- stack("newlandstack.tif") # MODIS landcover raster
 
 
 ## add min set objective function
+library(Rsymphony)
 
 bb_priormin <- function(pu = canada, features = currentstack, rel_tar = 0.17, 
                         raster_name = "", np = newprotect2,
@@ -245,10 +286,12 @@ bb_priormin <- function(pu = canada, features = currentstack, rel_tar = 0.17,
     add_min_set_objective() %>%
     add_relative_targets(rel_tar) %>%
     add_binary_decisions() %>%
-    add_gurobi_solver(threads = 6)
+    add_rsymphony_solver(0.15)
   s0 <- solve(p0)
   if(raster_name != ""){
-    writeRaster(s0, raster_name)
+    ## Purge raster attributes and convert format
+    rasterToWrite <- terra::rast(s0)
+    terra::writeRaster(rasterToWrite, raster_name)
   }
   
   f0 <- eval_feature_representation_summary(p0, s0) # checking species representation
@@ -281,14 +324,6 @@ bb_priormin <- function(pu = canada, features = currentstack, rel_tar = 0.17,
   return(list(p0 = p0, s0 = s0, f0 = f0, zn_p = zn_p, fr_s = fr_s, s0landcover = s0landcover))
 }
 
-#testing what happens with removing predicted occurrences less than 0.5
-currentstack2<-currentstack
-currentstack2[currentstack2<0.5]<-0
-future26stack2<-future26stack
-future26stack2[future26stack2<0.5]<-0
-future85stack2<-future85stack
-future85stack2[future85stack2<0.5]<-0
-
 
 ##########
 ##Min set function with higher targets for at-risk 
@@ -318,55 +353,75 @@ future85stack2[future85stack2<0.5]<-0
 ######
 
 ### Problem 1a add_min_set objective, 17%, current climate
-p1a <- bb_priormin(raster_name =  "prioritizrResults//s1aMinSet17.tif")
-
-p1a2 <- bb_priormin(features = currentstack2, raster_name =  "prioritizrResults//s1a2MinSet17.tif")
+p1a <- bb_priormin(raster_name =  "prioritizrResults//s1aMinSet17.tif") 
 
 ### Problem 2a add_min_set objective, 30% (Canada 2050 biodiversity target), current climate
 p2a <- bb_priormin( rel_tar = 0.3, raster_name =  "prioritizrResults//s2aMinSet30.tif")
 
-p2a2 <- bb_priormin(features = currentstack2, rel_tar = 0.3, raster_name =  "prioritizrResults//s2a2MinSet30.tif")
-
 ### Problem 3a add_min_set objective, 50% (nature needs half), current climate
 p3a<- bb_priormin( rel_tar = 0.5, raster_name =  "prioritizrResults//s3aMinSet50.tif")
-
-p3a2<-bb_priormin( features= currentstack2, rel_tar = 0.5, raster_name =  "prioritizrResults//s3a2MinSet50.tif")
 
 ### Problem 1b add_min_set_objective, 17% target, future climate rcp 2.6
 p1b <- bb_priormin(features = future26stack, raster_name =  "prioritizrResults//s1bMinSet17RCP26.tif")
 
-p1b2 <- bb_priormin(features = future26stack2, raster_name =  "prioritizrResults//s1b2MinSet17RCP26.tif")
-
 ### Problem 2b add_min_set_objective, 30% target, future climate rcp 2.6
 p2b<- bb_priormin(features = future26stack, rel_tar = 0.3, raster_name =  "prioritizrResults//s2bMinSet30RCP26.tif")
-
-p2b2<- bb_priormin(features = future26stack2, rel_tar = 0.3, raster_name =  "prioritizrResults//s2b2MinSet30RCP26.tif")
 
 ### Problem 3b add_min_set objective, 50% (nature needs half), future climate rcp 2.6
 p3b <- bb_priormin(features= future26stack, rel_tar = 0.5, raster_name =  "prioritizrResults//s3bMinSet50RCP26.tif")
 
-p3b2 <- bb_priormin(features= future26stack2, rel_tar = 0.5, raster_name =  "prioritizrResults//s3b2MinSet50RCP26.tif")
-
 ### Problem 1c add_min_set_objective, 17% target, future climate rcp 8.5
 p1c <- bb_priormin(features = future85stack, raster_name =  "prioritizrResults//s1cMinSet17RCP85.tif")
-
-p1c2 <- bb_priormin(features = future85stack2, raster_name =  "prioritizrResults//s1c2MinSet17RCP85.tif")
 
 ### Problem 2c add_min_set_objective, 30% target, future climate rcp 8.5
 p2c<- bb_priormin(features = future85stack, rel_tar = 0.3, raster_name =  "prioritizrResults//s2cMinSet30RCP85.tif")
 
-p2c2<- bb_priormin(features = future85stack2, rel_tar = 0.3, raster_name =  "prioritizrResults//s2c2MinSet30RCP85.tif")
-
 ### Problem 3c add_min_set objective, 50% (nature needs half), future climate rcp 8.5
 p3c <- bb_priormin(features= future85stack, rel_tar = 0.5, raster_name =  "prioritizrResults//s3cMinSet50RCP85.tif")
 
-p3c2 <- bb_priormin(features= future85stack2, rel_tar = 0.5, raster_name =  "prioritizrResults//s3c2MinSet50RCP85.tif")
+####
 
-###################
-#Prioritizr results figures
-###################
+###function adding eval_replacement_importance to add min set
+#instead of re-running above, writing a new function to test for evaluating solution importance
+#changing  to proportional decisions to make it run faster with negligible difference
 
-## prioritizr results figure 1
+bb_replace <- function(pu = canada, features = currentstack2, rel_tar = 0.17) {
+  
+  p0 <- problem(pu, features) %>%
+    add_min_set_objective() %>%
+    add_relative_targets(rel_tar) %>%
+    add_proportion_decisions() %>%
+    add_gurobi_solver(threads = 6)
+  s0 <- solve(p0)
+  
+r0<-eval_replacement_importance(p0, s0, threads=3)
+
+writeRaster(r0, paste0("prioritizrResults/replacement/", expression(features),rel_tar,".tif"))
+}
+
+###
+##re-running the prioritizr analysis with replacement importance
+
+#current climate, 17% target
+r1 <- bb_replace()
+#current climate, 30% target
+r2 <- bb_replace (rel_tar = 0.3)
+#current climate, 50% target
+r3<-bb_replace(rel_tar=0.5)
+
+################################
+###Prioritizr results figures
+################################
+
+library(raster)
+library(ggplot2)
+library(virdis)
+library(rgdal)
+
+prov<-readOGR(dsn=".", layer="provinces")
+prov2<-spTransform(prov, CRS("+proj=longlat +datum=WGS84 +no_defs"))
+
+#### prioritizr results <0.5 removed
 s1a<-raster("prioritizrResults/s1aMinSet17.tif")
 s2a<-raster("prioritizrResults/s2aMinSet30.tif")
 s3a<-raster("prioritizrResults/s3aMinSet50.tif")
@@ -376,65 +431,54 @@ s3b<-raster("prioritizrResults/s3bMinset50RCP26.tif")
 s1c<-raster("prioritizrResults/s1cMinSet17RCP85.tif")
 s2c<-raster("prioritizrResults/s2cMinSet30RCP85.tif")
 s3c<-raster("prioritizrResults/s3cMinSet50RCP85.tif")
+ecoreg <- readOGR("NA_CEC_Eco_Level1.shp")
+library(sf)
 
-topleft<-(s1b*1.1)-s1a
-topmid<-(s2b*1.1)-s2a
-topright<-(s3b*1.1)-s3a
-midleft<-(s1c*1.1)-s1a
-midmid<-(s2c*1.1)-s2a
-midright<-(s3c*1.1)-s3a
-botleft<-s1a*s1b*s1c
-botmid<-s2a*s2b*s2c
-botright<-s3a*s3b*s3c
+canreg <-readOGR("ecozones.shp")
+canecoreg <- mask (ecoreg, s1a)
 
-pdf("FigureMinSet.pdf", width = 16, height = 16, useDingbats = F)
-par(mfrow = c(3, 3))
-par(mar = c(4.5, 4.5, 0, 0))
-plot(topleft, col = c("#D4B483","#E3E3E3", "#416788","#416788"), legend = FALSE, xaxt = "n", cex.axis = 2, las = 1, xlim=c(-145,-52))
-plot(topmid, col = c("#D4B483","#E3E3E3", "#416788","#416788"), legend = FALSE, xaxt = "n", yaxt = "n", xlim=c(-145,-52))
-plot(topright, col = c("#D4B483","#E3E3E3", "#416788","#416788"), legend = FALSE, xaxt = "n", yaxt = "n", xlim=c(-145,-52))
-plot(midleft, col = c("#D4B483","#E3E3E3", "#416788","#416788"), legend = FALSE, xaxt = "n", cex.axis = 2, las = 1, xlim=c(-145,-52))
-plot(midmid, col = c("#D4B483","#E3E3E3", "#416788","#416788"), legend = FALSE, xaxt = "n", yaxt = "n", xlim=c(-145,-52))
-plot(midright, col = c("#D4B483","#E3E3E3", "#416788","#416788"), legend = FALSE, xaxt = "n", yaxt = "n", xlim=c(-145,-52))
-plot(botleft, col = c("#E3E3E3", "#51A3A3"), legend = FALSE, cex.axis = 2, las = 1, xlim=c(-145,-52))
-plot(botmid, col = c("#E3E3E3", "#51A3A3"), legend = FALSE, yaxt = "n", cex.axis = 2, xlim=c(-145,-52))
-plot(botright, col = c("#E3E3E3", "#51A3A3"), legend = FALSE, yaxt = "n", cex.axis = 2, xlim=c(-145,-52))
+canecoplot <- ggplot(st_as_sf(canreg)) +
+  geom_sf(aes(fill = ZONE_NAME)) +
+  scale_fill_manual(
+    values = c("#9E0142", "#F93943", "#E4572E", "#FDAE61", "#F5CB5C",
+               "#DDE5B6", "#A7C957",  "#386641", "#66A182", "#66C2A5", 
+               "#A9D6E5", "#3288BD", "#445E93","#6A4C93", "#6930C3",
+               "#2E4057") , 
+    name = "Ecoregions Level 1"
+  )
+canecoplot
+
+pdf("LeftMinSet.pdf", width = 10, height = 8, useDingbats = F)
+plot.new()
+par(mfrow = c(2, 2))
+par(mar=c(0, 0, 0, 0))
+plot(s1a, col=c("#CFC9CF", "#232ED1"),  legend=F, xaxt = "n", yaxt = "n", box(col="white"))
+plot(prov2, add=T)
+plot(s1b, col=c("#D8CC3400", adjustcolor ("#E90023", alpha.f=0.7)), 
+                 legend=F,  xaxt = "n", yaxt = "n", add=T, box(col="white"))
+plot(s1c, col=c("#E3E3E300", adjustcolor ("#FFEE00", alpha.f=0.65)), 
+      legend=F,  xaxt = "n", yaxt = "n", add=T, box(col="white"))
+# dev.off()
+# 
+# pdf("MidMinSet.pdf", width = 16, height = 16, useDingbats = F)
+plot(s2a, col=c("#CFC9CF", "#232ED1"), legend=F, xaxt = "n", yaxt = "n", box(col="white"))
+plot(prov2, add=T)
+plot(s2b, col=c("#D8CC3400", adjustcolor ("#E90023", alpha.f=0.7)), 
+      legend=F,  xaxt = "n", yaxt = "n", add=T, box(col="white"))
+plot(s2c, col=c("#E3E3E300", adjustcolor ("#FFEE00", alpha.f=0.65)), 
+      legend=F,  xaxt = "n", yaxt = "n", add=T, box(col="white"))
+
+# dev.off()
+# 
+# pdf("RightMinSet.pdf", width = 16, height = 16, useDingbats = F)
+plot(s3a, col=c("#CFC9CF", "#232ED1"), legend=F, xaxt = "n", yaxt = "n", box(col="white"))
+plot(prov2, add=T)
+plot(s3b, col=c("#D8CC3400", adjustcolor ("#E90023", alpha.f=0.7)), 
+      legend=F,  xaxt = "n", yaxt = "n", add=T, box(col="white"))
+plot(s3c, col=c("#E3E3E300", adjustcolor ("#FFEE00", alpha.f=0.65)), 
+      legend=F,  xaxt = "n", yaxt = "n", add=T, box(col="white"))
 dev.off()
 
-#### prioritizr results <0.5 removed test figure
-s1a2<-raster("prioritizrResults/s1a2MinSet17.tif")
-s2a2<-raster("prioritizrResults/s2a2MinSet30.tif")
-s3a2<-raster("prioritizrResults/s3a2MinSet50.tif")
-s1b2<-raster("prioritizrResults/s1b2MinSet17RCP26.tif")
-s2b2<-raster("prioritizrResults/s2b2MinSet30RCP26.tif")
-s3b2<-raster("prioritizrResults/s3b2Minset50RCP26.tif")
-s1c2<-raster("prioritizrResults/s1c2MinSet17RCP85.tif")
-s2c2<-raster("prioritizrResults/s2c2MinSet30RCP85.tif")
-s3c2<-raster("prioritizrResults/s3c2MinSet50RCP85.tif")
-
-topleft<-(s1b2*1.1)-s1a2
-topmid<-(s2b2*1.1)-s2a2
-topright<-(s3b2*1.1)-s3a2
-midleft<-(s1c2*1.1)-s1a2
-midmid<-(s2c2*1.1)-s2a2
-midright<-(s3c2*1.1)-s3a2
-botleft<-s1a2*s1b2*s1c2
-botmid<-s2a2*s2b2*s2c2
-botright<-s3a2*s3b2*s3c2
-
-pdf("FigureMinSet2.pdf", width = 16, height = 16, useDingbats = F)
-par(mfrow = c(3, 3))
-par(mar = c(4.5, 4.5, 0, 0))
-plot(topleft, col = c("#D4B483","#E3E3E3", "#416788","#416788"), legend = FALSE, xaxt = "n", cex.axis = 2, las = 1, xlim=c(-145,-52))
-plot(topmid, col = c("#D4B483","#E3E3E3", "#416788","#416788"), legend = FALSE, xaxt = "n", yaxt = "n", xlim=c(-145,-52))
-plot(topright, col = c("#D4B483","#E3E3E3", "#416788","#416788"), legend = FALSE, xaxt = "n", yaxt = "n", xlim=c(-145,-52))
-plot(midleft, col = c("#D4B483","#E3E3E3", "#416788","#416788"), legend = FALSE, xaxt = "n", cex.axis = 2, las = 1, xlim=c(-145,-52))
-plot(midmid, col = c("#D4B483","#E3E3E3", "#416788","#416788"), legend = FALSE, xaxt = "n", yaxt = "n", xlim=c(-145,-52))
-plot(midright, col = c("#D4B483","#E3E3E3", "#416788","#416788"), legend = FALSE, xaxt = "n", yaxt = "n", xlim=c(-145,-52))
-plot(botleft, col = c("#E3E3E3", "#51A3A3"), legend = FALSE, cex.axis = 2, las = 1, xlim=c(-145,-52))
-plot(botmid, col = c("#E3E3E3", "#51A3A3"), legend = FALSE, yaxt = "n", cex.axis = 2, xlim=c(-145,-52))
-plot(botright, col = c("#E3E3E3", "#51A3A3"), legend = FALSE, yaxt = "n", cex.axis = 2, xlim=c(-145,-52))
-dev.off()
 
 ####landcover bar plot figure
 library(ggplot2)
@@ -448,24 +492,54 @@ landlist<-landcovercsv %>%
   map_dfr(~read_csv(.x, col_types=cols(), col_names=FALSE), .id="file_name")
 write.csv(landlist, "prioritizrResults/landcover/AllLandcover.csv")
 
-#reorganized AllLandcover csv and reclassified landcover classes to names
-#making the figure
-#calculating weighted  percent cover of each landcover class
-#weighted by proprotion of each landcover type throughout Canada
-landdat<-read.csv("prioritizrResults/landcover/AllLandcover.csv")
-keeps <-landdat %>% group_by(landcover) %>% summarize(n=min(weightedPercent)) %>% filter(n>1)
-landdat2 <- landdat %>% filter(landcover %in% keeps$landcover)
+
+## get proportionate land cover areas
+propLandcover <- sapply(1:nlayers(landcover), function(i){
+  tempRaster <- landcover[[i]]
+  tempRaster[tempRaster > 0]  <- 1
+  freq(tempRaster,  value = 1, useNA = "no")
+})
+landdat.new <- landdat %>% filter(X1 %in% c("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14",
+                           "15", "16", "17"))
+landdat.new2 <-  landdat.new %>%  rename (landcoverClass = X1, 
+                     percentcover = X2)
+
+landdat2 <- landdat.new2 %>% 
+  mutate(modelCode = substr(file_name, 29, 31))
+
+landdat2[,"propLand"] <- rep(unique(propLandcover), times = 9)
+
+landdat3 <- landdat2 %>% 
+  mutate(weighted = as.numeric(percentcover)/propLand)
+
+propsum<- keeps <-landdat3 %>% group_by(landcoverClass) %>% summarize(n=min(weighted))
+write.csv(propsum, "landpropweighted.csv")
+keeps <-landdat3 %>% group_by(landcoverClass) %>% summarize(n=min(weighted)) %>% filter(n>0.00003)
+landdat4 <- landdat3 %>% filter(landcoverClass %in% keeps$landcoverClass)
+
+current <- c("s1a", "s2a", "s3a")
+future2.6 <- c("s1b", "s2b", "s3b")
+future8.5 <- c("s1c", "s2c", "s3c")
+
+landdat5 <- landdat4 %>% 
+  mutate(climate = ifelse(modelCode %in% current, "current", 
+                          ifelse(modelCode %in% future2.6, "future2.6", "future8.5")))
 
 #calculating standard error for barplot
-error <-landdat2 %>% group_by(landcover, climate) %>% summarise(mean = mean(weightedPercent), se=sd(weightedPercent)/sqrt(3)) 
+error <-landdat5 %>% group_by(landcoverClass, climate) %>% summarise(mean = mean(weighted), 
+                                                                     se=sd(weighted)/sqrt(3)) 
 
 #making plot
-ggplot(data=error, aes(x=reorder(landcover, -mean), y=mean, fill=climate))+
+ggplot(data=error, aes(x=reorder(landcoverClass, -mean), y=mean, fill=climate))+
   geom_bar(stat="summary",  color="black", position=position_dodge())  +
-  geom_errorbar(data=error, aes(x=reorder(landcover, -mean), ymin=mean-se, ymax=mean+se), width=0, position=position_dodge(width=0.9)) +
+  geom_errorbar(data=error, aes(x=reorder(landcoverClass, -mean), ymin=mean-se, ymax=mean+se), 
+                width=0, position=position_dodge(width=0.9)) +
   theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
         panel.background = element_blank(), axis.line = element_line(colour = "black")) +
-  scale_fill_manual(values=c("#FAFF81", "#FC7753", "#403D58"))+
+  scale_fill_manual(values=c("#1D29AD", "#E00031", "#FFD500")) +
+  scale_x_discrete(breaks = c("12", "10", "7", "5", "15", "8"),
+                   labels = c("Croplands", "Grasslands", "Open Shrublands", "Mixed Forest", "Snow or Ice",
+                              "Woody Savannah")) + 
   xlab("Landcover Class")+ ylab("Weighted Percent Cover")+scale_y_continuous(expand=c(0,0))
 
 ###Proportion of common and at-risk species within protected areas
@@ -481,7 +555,48 @@ write.csv(MinSetlist, "prioritizrResults/speciesOutput/AllMinSet.csv")
 ##proportion of at-risk vs. common species within the solution
 #summarized excel sheet in excel, added common/at-risk status
 object<-read.csv("prioritizrResults/speciesOutput/AllMinSet.csv")
-error <-object %>% group_by(status, climate, target) %>% summarise(mean = mean(relative_held, na.rm=TRUE), se=sd(relative_held, na.rm=TRUE)/sqrt(length(relative_held[!is.na(relative_held)])))
+
+object.new <-  object %>%  rename (species = X2, 
+                                   totalAmount = X3,
+                                   absoluteHeld = X4,
+                                   relativeHeld = X5,
+                                   percentProtect = X6)
+
+object.new2 <- object.new [!is.na(as.numeric(object.new$relativeHeld)),]
+
+object2 <- object.new2 %>% 
+  mutate(modelCode = substr(file_name, 33, 35))
+
+current <- c("s1a", "s2a", "s3a")
+future2.6 <- c("s1b", "s2b", "s3b")
+future8.5 <- c("s1c", "s2c", "s3c")
+
+target17 <-c("s1a", "s1b", "s1c")
+target30 <-c("s2a", "s2b", "s2c")
+target50 <-c("s3a", "s3b", "s3c")
+
+object3 <- object2 %>% 
+  mutate(climate = ifelse(modelCode %in% current, "current", 
+                          ifelse(modelCode %in% future2.6, "future2.6", "future8.5")))
+
+object3 <- object3 %>% 
+  mutate(target = ifelse(modelCode %in% target17, "17", 
+                         ifelse(modelCode %in% target30, "30", "50")))
+write.csv(object3, "prioritizrResults/speciesOutput/AllMinSetCleaner.csv")
+
+clean <- read.csv("prioritizrResults/speciesOutput/AllMinSetCleaner.csv")
+
+atRisk <-c("affinis", "caliginosus", "cryptarum", "fervidus", "flavidus", "fraternus", "jonellus",
+           "kirbiellus", "morrisoni", "neoboreus", "occidentalis", "pensylvanicus", "polaris", 
+           "suckleyi", "terricola")
+
+clean <- clean %>% 
+  mutate(status = ifelse(species %in% atRisk, "atRisk", "stable"))
+
+
+error <- clean %>% group_by(status, climate, target) %>% 
+  summarise(mean = mean(relativeHeld, na.rm=TRUE), 
+            se=sd(relativeHeld, na.rm=TRUE)/sqrt(length(relativeHeld[!is.na(relativeHeld)])))
 
 ggplot(data=error, aes(x=climate, y=mean, fill=status))+
   geom_bar(stat="summary", color="black", position=position_dodge()) + facet_grid(cols=vars(target)) +
@@ -493,19 +608,44 @@ ggplot(data=error, aes(x=climate, y=mean, fill=status))+
 
 #### percent area with >50% suitability figure
 library(ggplot2)
+library(ggbreak)
 library(gridExtra)
 library(forcats)
 library(raster)
 
 #the species range did not calculate properly due to a typo in the function so recalculating here
-currentrangestack <- stack("Outputs/CurrentUpdated.grd")
-future26rangestack<-stack("Outputs/Future26Updated.grd")
-future85rangestack<-stack("Outputs/Future85Updated.grd")
+# IT DID IN FEB 2023 SO IGNORE NOW 
+canada1 <- raster("CanadaPolyRaster5km.grd")
+
+currentlist<-list.files("Outputs//current",full.names=T)
+currentstack<-stack(currentlist)
+currentstackmin<-currentstack
+currentstackmin <- crop(currentstackmin, canada1)
+currentstackmin[canada1==1 & is.na(currentstackmin)] <- 0 ## assign non-predicted areas of Canada zero values
+currentstackmin<-mask(currentstackmin, polyCAN) 
+currentstack2<-currentstackmin
+
+future26list<-list.files("Outputs//future26",full.names=T)
+future26stack<-stack(future26list)
+future26stackmin<-future26stack
+future26stackmin<-crop(future26stackmin, canada1)
+future26stackmin[canada1==1 & is.na(future26stackmin)] <- 0
+future26stackmin<-mask(future26stackmin, polyCAN) 
+future26stack2<-future26stackmin
+
+future85list<-list.files("Outputs//future85",full.names=T)
+future85stack<-stack(future85list)
+future85stackmin<-future85stack
+future85stackmin<-crop(future85stackmin, canada1)
+future85stackmin[canada1==1 & is.na(future85stackmin)] <- 0
+future85stackmin<-mask(future85stackmin, polyCAN) 
+future85stack2<-future85stackmin
+
 bumblebeenames <- c("affinis", "appositus", "auricomus", "bifarius", "bimaculatus", "bohemicus", 
                     "borealis", "caliginosus", "centralis", "citrinus", "crotchii", "cryptarum", 
                     "fervidus", "flavidus", "flavifrons", "fraternus", "frigidus", "griseocollis",
-                    "huntii", "impatiens", "insularis", "jonellus", "kirbiellus", "kluanensis", 
-                    "melanopygus", "mixtus", "morrisoni", "natvigi", "neoboreus", "nevadensis", 
+                    "huntii", "impatiens", "insularis", "jonellus", "kirbiellus", 
+                    "melanopygus", "mixtus", "morrisoni", "neoboreus", "nevadensis", 
                     "occidentalis", "pensylvanicus", "perplexus", "polaris", "rufocinctus", 
                     "sandersoni", "sitkensis", "suckleyi", "sylvicola", "ternarius", "terricola",
                     "vagans", "vandykei", "vosnesenskii")
@@ -513,50 +653,93 @@ names(currentrangestack) <- bumblebeenames
 
 calcsppRange <- function(x){
   spprange<- x
-  spprange[spprange <= 0.001] <- NA
+  spprange[spprange <= 0.01] <- NA
   spprange<-spprange[!is.na(spprange)]
   spprange<- ncell(spprange)/ncell(x)
   spprange<-(spprange)*1717662
   return(spprange)
 }
-outRange <- lapply(1:nlayers(currentrangestack), function(i){
-  calcsppRange(currentrangestack[[i]])
+outRange <- lapply(1:nlayers(currentstack2), function(i){
+  calcsppRange(currentstack2[[i]])
 })
 currentRanges <- data.frame(Species = bumblebeenames, CurrentRange= do.call(c, outRange))
 
-outRange <- lapply(1:nlayers(future26rangestack), function(i){
-  calcsppRange(future26rangestack[[i]])
+outRange <- lapply(1:nlayers(future26stack2), function(i){
+  calcsppRange(future26stack2[[i]])
 })
 future26Ranges <- data.frame(Species = bumblebeenames, future26Range= do.call(c, outRange))
 
-outRange <- lapply(1:nlayers(future85rangestack), function(i){
-  calcsppRange(future85rangestack[[i]])
+outRange <- lapply(1:nlayers(future85stack2), function(i){
+  calcsppRange(future85stack2[[i]])
 })
 future85Ranges <- data.frame(Species = bumblebeenames, future85Range= do.call(c, outRange))
 
 
-prop50 <- read.csv("Outputs/allModels.csv", stringsAsFactors=FALSE)
+prop50 <- currentRanges %>% left_join(future26Ranges) %>% left_join(future85Ranges)
+prop50[,c("CurrentRange","future26Range","future85Range")] <- prop50[,c("CurrentRange","future26Range","future85Range")]  +1
+
+
+Sppcsv <- list.files(path ="Outputs/speciesoutput", pattern = ".csv", full.names = TRUE)
+Sppcsv<-Sppcsv %>% 
+  setNames(nm= .) %>%
+  map_dfr(~read_csv(.x, col_types=cols(), col_names=FALSE), .id="file_name")
+write.csv(Sppcsv, "Outputs/speciesoutput/AllMaxents.csv")
+
+alldem <- read.csv("Outputs/speciesoutput/AllMaxents.csv")
+
+alldem.new <-  alldem %>%  rename (species = X1, 
+                                   AUC = X2,
+                                   CBI = X3,
+                                   features = X4,
+                                   regularization = X5,
+                                   npresence = X6,
+                                   nabsence = X7,
+                                   VIFexclude = X8,
+                                   importantVar = X9,
+                                   importantValue = X10,
+                                   percentContribution = X11,
+                                   currentRange = X12,
+                                   future2.6Range = X13,
+                                   future8.5Range = X14)
+
+alldem.new2 <- alldem.new [!is.na(as.numeric(alldem.new$currentRange)),]
+write.csv(alldem.new2, "Outputs/speciesoutput/AllMaxentsCleaner.csv")
+
+allrange <-subset(alldem.new2, select = c("species", "currentRange", "future2.6Range", "future8.5Range"))
+allrange[,2:4]<- apply(allrange[,2:4], 2, as.numeric)
+
 library(tidyverse)
-prop50 <- prop50 %>% filter(!(species %in% c("bohemicus", "natvigi","neoboreus", "polaris", "suckleyi"))) %>% 
-  dplyr::select(species, Current= currentRange,Future26= future26Range, Future85=future85Range) %>% 
-  mutate(diff26 = (Future26-Current)/Current, diff85 = (Future85-Current)/Current) %>% 
+prop <- allrange %>%  
+  dplyr::select(species = species, current= currentRange,future2.6= future2.6Range, future8.5=future8.5Range)%>% 
+  mutate(diff26 = (future2.6-current)/current, diff85 = (future8.5-current)/current) %>% 
   mutate(species = factor(species, levels=species[order(diff26)] )) %>% ## re-order by change in area
-  mutate(group = ifelse(diff26 < 0, "decreasing","increasing")) %>% 
+  mutate(group = ifelse(diff26 <= -0.001, "decreasing","increasing")) %>% 
   gather(climate, proportion, diff26:diff85) 
 
 
-plot1 <- ggplot(prop50 %>% filter(group=="decreasing"), aes(x= fct_rev(species), y=proportion*100, fill=fct_rev(climate))) + geom_bar(stat="identity", position="dodge") + coord_flip() +
-  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+plot1 <- ggplot(prop %>% filter(group=="decreasing"), 
+                aes(x= fct_rev(species), y=proportion*100, fill=fct_rev(climate))) + 
+  geom_bar(stat="identity", position="dodge") + coord_flip() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), legend.position="none",
         panel.background = element_blank(), axis.line = element_line(colour = "black")) +
-  scale_fill_manual(values=c("#403D58", "#FC7753", "#FAFF81")) +
-  xlab("")+ ylab("Percent Change in Range from Current")+ ylim(-100,5)
+  scale_fill_manual(values=c("#FFD500", "#E00031", "#FFD500")) +
+  theme(axis.text.y = element_text(face="italic", size=12))+
+  theme(axis.text.x = element_text(size = 12)) +
+  xlab("")+ ylab("Percent Change in Range from Current")+ ylim(-30,10)
   # scale_y_continuous(expand=c(0,0)) 
 
-plot2 <- ggplot(prop50 %>% filter(group=="increasing"), aes(x= fct_rev(species), y=proportion*100, fill=fct_rev(climate))) + geom_bar(stat="identity", position="dodge") + coord_flip() +
+plot2 <- ggplot(prop %>% filter(group=="increasing"), 
+                aes(x= fct_rev(species), y=proportion*100, fill=fct_rev(climate))) + 
+  geom_bar(stat="identity", position="dodge") + coord_flip() +
   theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
         panel.background = element_blank(), axis.line = element_line(colour = "black")) +
-  scale_fill_manual(values=c("#403D58", "#FC7753", "#FAFF81")) +
-  xlab("")+ ylab("Percent Change in Range from Current")+ ylim(0,120)
+  scale_fill_manual(values=c("#FFD500", "#E00031", "#FFD500"), 
+                    labels = c("future RCP 8.5", "future RCP 2.6")) +
+  theme(axis.text.y = element_text(face="italic", size=12))+
+  theme(axis.text.x = element_text(size = 12)) +
+  theme(legend.title=element_blank())+
+  theme(legend.position = c(0.5, 0.95)) +
+  xlab("")+ ylab("Percent Change in Range from Current")+ ylim(-1,30) 
   # scale_y_continuous(expand=c(0,0))
 
 gridExtra::grid.arrange(plot1, plot2, ncol=2)
@@ -568,15 +751,15 @@ library(dplyr)
 
 #datafiles
 elevation<-raster("CAN_msk_alt.grd")
-s1a<-raster("prioritizrResults/s1a3MinSet17.tif")
-s2a<-raster("prioritizrResults/s2a3MinSet30.tif")
-s3a<-raster("prioritizrResults/s3a3MinSet50.tif")
-s1b<-raster("prioritizrResults/s1b3MinSet17RCP26.tif")
-s2b<-raster("prioritizrResults/s2b3MinSet17RCP26.tif")
-s3b<-raster("prioritizrResults/s3b3Minset50RCP26.tif")
-s1c<-raster("prioritizrResults/s1c3MinSet17RCP85.tif")
-s2c<-raster("prioritizrResults/s2c3MinSet30RCP85.tif")
-s3c<-raster("prioritizrResults/s3c3MinSet50RCP85.tif")
+s1a<-raster("prioritizrResults/s1aMinSet17.tif")
+s2a<-raster("prioritizrResults/s2aMinSet30.tif")
+s3a<-raster("prioritizrResults/s3aMinSet50.tif")
+s1b<-raster("prioritizrResults/s1bMinSet17RCP26.tif")
+s2b<-raster("prioritizrResults/s2bMinSet30RCP26.tif")
+s3b<-raster("prioritizrResults/s3bMinset50RCP26.tif")
+s1c<-raster("prioritizrResults/s1cMinSet17RCP85.tif")
+s2c<-raster("prioritizrResults/s2cMinSet30RCP85.tif")
+s3c<-raster("prioritizrResults/s3cMinSet50RCP85.tif")
 
 east<-extent(-90, -54.27083, 42.85417, 83.0625) #separating into east and west to account for the Rockies
 west<-extent(-141, -90, 41.66667, 83.125)
@@ -660,10 +843,9 @@ allDone2 <- allDone2[!duplicated(allDone2),]
 
 
 
-
-########################
+###########################
 ###Climate Data Prepping
-########################
+###########################
 
 ##Current climate
 currentclim<-list.files("current", full.names = TRUE, pattern=".bil")
@@ -747,6 +929,21 @@ maskstack<-mask(cropstack, polyCAN)
 stackspmin<-maskstack
 stackspmin <- reclassify(stackspmin, cbind(-Inf, 0.2, 0), right=FALSE)
 writeRaster(stackspmin, "Future85stack2.5min.grd", overwrite=T)
+
+## what land cover classes are within protected areas?
+
+prozone <- zonal(landcover, newprotect2, fun= "sum")
+prozone
+#ncells of landcover = 2110395
+prozone2 <- prozone/2110395
+
+
+
+zn_p <- zonal(s0, np, fun = "sum") # summing the amount of pixels within and outside of protected areas
+#     zone   sum
+# [1,]    0 86537
+# [2,]    1 16456   ###16,456 pixels from s2b are within protected areas
+fr_s <- freq(s0) #
 
 
 
